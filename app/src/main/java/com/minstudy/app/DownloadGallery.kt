@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.dp
 import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.upstream.DataSpec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,6 +36,16 @@ data class DownloadRecord(
     val mime: String,
     val bytes: Long
 )
+
+class DownloadControl {
+    @Volatile var paused: Boolean = false
+    @Volatile var cancelled: Boolean = false
+
+    suspend fun checkpoint() {
+        while (paused && !cancelled) delay(150)
+        if (cancelled) throw CancellationException("Download cancelled")
+    }
+}
 
 object DownloadRepository {
     private const val PREFS = "mine_study_downloads"
@@ -71,6 +83,7 @@ object DownloadRepository {
         title: String,
         category: String,
         isVideo: Boolean,
+        control: DownloadControl = DownloadControl(),
         onProgress: (Long, Long) -> Unit
     ): DownloadRecord = withContext(Dispatchers.IO) {
         val clean = title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "Study material" }
@@ -97,13 +110,16 @@ object DownloadRepository {
                     val data = ChunkQueryDataSource()
                     try {
                         data.open(DataSpec(Uri.parse(sourceUrl)))
+                        val total = data.discoveredLength
+                        onProgress(0L, total)
                         val buffer = ByteArray(64 * 1024)
                         while (true) {
+                            if (data.isAtChunkBoundary) control.checkpoint()
                             val count = data.read(buffer, 0, buffer.size)
                             if (count == C.RESULT_END_OF_INPUT) break
                             out.write(buffer, 0, count)
                             written += count
-                            onProgress(written, -1L)
+                            onProgress(written, total)
                         }
                     } finally { data.close() }
                 } else {
@@ -120,6 +136,7 @@ object DownloadRepository {
                         connection.inputStream.use { input ->
                             val buffer = ByteArray(64 * 1024)
                             while (true) {
+                                control.checkpoint()
                                 val count = input.read(buffer)
                                 if (count < 0) break
                                 out.write(buffer, 0, count)
