@@ -102,7 +102,11 @@ object DownloadRepository {
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
         }
-        val collection = MediaStore.Files.getContentUri("external")
+        val collection = if (Build.VERSION.SDK_INT >= 29) {
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        } else {
+            MediaStore.Files.getContentUri("external")
+        }
         val resolver = context.contentResolver
         val uri = resolver.insert(collection, values) ?: throw IllegalStateException("Could not create download file")
         var written = 0L
