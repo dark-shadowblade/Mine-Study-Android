@@ -29,11 +29,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,6 +58,7 @@ import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.ui.PlayerView
+import com.google.android.exoplayer2.ui.PlayerControlView
 import com.google.android.exoplayer2.upstream.DataSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -699,8 +704,10 @@ private fun VideoScreen(
         controllerAutoShow = true
         controllerShowTimeoutMs = 4500
         setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-        rewindIncrementMs = 10_000
-        fastForwardIncrementMs = 10_000
+        findViewById<PlayerControlView>(com.google.android.exoplayer2.ui.R.id.exo_controller)?.apply {
+            setRewindIncrementMs(10_000)
+            setFastForwardIncrementMs(10_000)
+        }
         resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
     }
 
