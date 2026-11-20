@@ -766,10 +766,10 @@ private fun VideoScreen(
     }
 
     @Composable
-    fun Controls(light: Boolean = false) {
+    fun Controls(modifier: Modifier = Modifier, light: Boolean = false) {
         val fg = if (light) Color.White else Color(0xFFF4F5FA)
         Column(
-            Modifier.fillMaxWidth()
+            modifier.fillMaxWidth()
                 .background(if (light) Color(0xCC080A10) else Color(0xFF171D2A), RoundedCornerShape(if (light) 0.dp else 20.dp))
                 .padding(horizontal = 15.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp)
