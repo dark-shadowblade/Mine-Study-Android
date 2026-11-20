@@ -17,6 +17,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.ui.unit.dp
 import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.upstream.DataSpec
@@ -164,6 +167,13 @@ object DownloadRepository {
 @androidx.compose.runtime.Composable
 fun DownloadGallery(
     records: List<DownloadRecord>,
+    status: String,
+    active: Boolean,
+    paused: Boolean,
+    bytes: Long,
+    total: Long,
+    onTogglePause: () -> Unit,
+    onCancel: () -> Unit,
     onOpen: (DownloadRecord) -> Unit,
     onRefresh: () -> Unit
 ) {
@@ -178,6 +188,48 @@ fun DownloadGallery(
         ) {
             androidx.compose.material3.Text("Downloads", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
             androidx.compose.material3.TextButton(onClick = onRefresh) { androidx.compose.material3.Text("Refresh") }
+        }
+        if (status.isNotBlank()) {
+            androidx.compose.material3.Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+            ) {
+                androidx.compose.foundation.layout.Column(
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(9.dp)
+                ) {
+                    androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        androidx.compose.material3.Text(status, modifier = Modifier.weight(1f), fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 2)
+                        if (active) {
+                            androidx.compose.material3.IconButton(onClick = onTogglePause) {
+                                androidx.compose.material3.Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (paused) "Resume" else "Pause")
+                            }
+                            androidx.compose.material3.IconButton(onClick = onCancel) {
+                                androidx.compose.material3.Icon(Icons.Default.Close, "Cancel", tint = androidx.compose.material3.MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                    if (active) {
+                        if (total > 0L) {
+                            val progress = (bytes.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                            androidx.compose.material3.LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
+                            androidx.compose.material3.Text(
+                                "${bytes / (1024 * 1024)} MB / ${total / (1024 * 1024)} MB  •  ${(progress * 100).toInt()}%",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            androidx.compose.material3.Text(
+                                "${bytes / (1024 * 1024)} MB downloaded",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
         }
         androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
             items(categories) { category ->
