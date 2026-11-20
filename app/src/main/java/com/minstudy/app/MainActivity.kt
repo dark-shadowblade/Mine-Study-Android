@@ -213,8 +213,7 @@ private fun MineStudyApp() {
                     "home" -> {
                         Spacer(Modifier.height(18.dp))
                         Text("LEARN AT YOUR PACE", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 2.sp)
-                        Text("Pick up where
-you left off.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Bold)
+                        Text("Pick up where\nyou left off.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(20.dp))
                         Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF191E2D))) {
                             Column(Modifier.fillMaxWidth().padding(20.dp)) {
