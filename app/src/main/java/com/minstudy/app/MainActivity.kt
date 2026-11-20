@@ -34,6 +34,9 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
@@ -62,6 +65,7 @@ import com.google.android.exoplayer2.upstream.DataSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -662,6 +666,7 @@ private fun DownloadStatusPanel(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VideoScreen(
     title: String,
@@ -683,7 +688,14 @@ private fun VideoScreen(
     val context = LocalContext.current
     val activity = context as? Activity
     var fullScreen by remember { mutableStateOf(false) }
+    var speedMenu by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
+    var isPlaying by remember { mutableStateOf(true) }
+    var buffering by remember { mutableStateOf(true) }
+    var positionMs by remember { mutableLongStateOf(0L) }
+    var durationMs by remember { mutableLongStateOf(0L) }
+    var playerError by remember { mutableStateOf("") }
+
     val player = remember(url) {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(ChunkQueryDataSourceFactory()))
@@ -695,14 +707,12 @@ private fun VideoScreen(
                 playWhenReady = true
             }
     }
-    var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
-    var playerError by remember(player) { mutableStateOf("") }
 
     DisposableEffect(player) {
-        player.setPlaybackSpeed(playbackSpeed)
         val listener = object : com.google.android.exoplayer2.Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onPlaybackStateChanged(state: Int) {
-                playbackState = state
+                buffering = state == com.google.android.exoplayer2.Player.STATE_BUFFERING
                 if (state == com.google.android.exoplayer2.Player.STATE_ENDED && hasNext) onNext()
             }
             override fun onPlayerError(error: com.google.android.exoplayer2.PlaybackException) {
@@ -713,6 +723,16 @@ private fun VideoScreen(
         onDispose {
             player.removeListener(listener)
             player.release()
+        }
+    }
+
+    LaunchedEffect(player) {
+        while (true) {
+            positionMs = player.currentPosition.coerceAtLeast(0L)
+            durationMs = player.duration.takeIf { it > 0L && it != com.google.android.exoplayer2.C.TIME_UNSET } ?: 0L
+            isPlaying = player.isPlaying
+            buffering = player.playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING
+            delay(400)
         }
     }
 
@@ -731,94 +751,130 @@ private fun VideoScreen(
         }
     }
 
-    fun cyclePlaybackSpeed() {
-        playbackSpeed = when (playbackSpeed) {
-            1f -> 1.25f
-            1.25f -> 1.5f
-            1.5f -> 1.75f
-            1.75f -> 2f
-            else -> 1f
-        }
-        player.setPlaybackSpeed(playbackSpeed)
+    fun chooseSpeed(speed: Float) {
+        playbackSpeed = speed
+        player.setPlaybackSpeed(speed)
+        speedMenu = false
     }
 
-    fun makePlayerView(ctx: Context) = PlayerView(ctx).apply {
-        this.player = player
-        useController = true
-        controllerAutoShow = true
-        controllerShowTimeoutMs = 4500
-        setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-        setShowRewindButton(true)
-        setShowFastForwardButton(true)
-        resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+    @Composable
+    fun Controls(light: Boolean = false) {
+        val fg = if (light) Color.White else Color(0xFFF4F5FA)
+        Column(
+            Modifier.fillMaxWidth()
+                .background(if (light) Color(0xCC080A10) else Color(0xFF171D2A), RoundedCornerShape(if (light) 0.dp else 20.dp))
+                .padding(horizontal = 15.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, modifier = Modifier.weight(1f), color = fg, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Box {
+                    FilledTonalButton(onClick = { speedMenu = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
+                        Text(playbackSpeed.toString() + "×", fontWeight = FontWeight.Bold)
+                    }
+                    DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
+                        listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 3.5f, 4f).forEach { speed ->
+                            DropdownMenuItem(
+                                text = { Text(speed.toString() + "×", fontWeight = if (playbackSpeed == speed) FontWeight.Bold else FontWeight.Normal) },
+                                onClick = { chooseSpeed(speed) }
+                            )
+                        }
+                    }
+                }
+                if (light) {
+                    IconButton(onClick = { fullScreen = false }) {
+                        Icon(Icons.Default.FullscreenExit, "Exit fullscreen", tint = fg)
+                    }
+                }
+            }
+            if (buffering) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color(0xFF9B8CFF))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Loading video…", color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onPrevious, enabled = hasPrevious) {
+                    Icon(Icons.Default.SkipPrevious, "Previous lecture", tint = if (hasPrevious) fg else Color.Gray, modifier = Modifier.size(29.dp))
+                }
+                IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }) {
+                    Icon(Icons.Default.Replay10, "Back 10 seconds", tint = fg, modifier = Modifier.size(34.dp))
+                }
+                FilledIconButton(
+                    onClick = {
+                        if (player.isPlaying) player.pause()
+                        else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) {
+                            player.seekTo(0L)
+                            player.play()
+                        } else player.play()
+                    },
+                    modifier = Modifier.size(56.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFF9B8CFF), contentColor = Color(0xFF10121A))
+                ) {
+                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", modifier = Modifier.size(31.dp))
+                }
+                IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)) }) {
+                    Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = fg, modifier = Modifier.size(34.dp))
+                }
+                IconButton(onClick = onNext, enabled = hasNext) {
+                    Icon(Icons.Default.SkipNext, "Next lecture", tint = if (hasNext) fg else Color.Gray, modifier = Modifier.size(29.dp))
+                }
+            }
+            Slider(
+                value = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs).toFloat() else 0f,
+                onValueChange = { positionMs = it.toLong() },
+                onValueChangeFinished = { player.seekTo(positionMs) },
+                valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
+                enabled = durationMs > 0L
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(formatTime(positionMs), color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                Text(formatTime(durationMs), color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+            }
+        }
     }
 
     if (fullScreen) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AndroidView(factory = { makePlayerView(it) }, update = { it.player = player }, modifier = Modifier.fillMaxSize())
-            Row(
-                Modifier.align(Alignment.TopEnd).padding(10.dp)
-                    .background(Color(0x99000000), RoundedCornerShape(14.dp))
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(title, color = Color.White, maxLines = 1, modifier = Modifier.widthIn(max = 180.dp))
-                TextButton(onClick = { cyclePlaybackSpeed() }) {
-                    Text("${playbackSpeed}×", color = Color.White)
-                }
-                IconButton(onClick = { fullScreen = false }) {
-                    Icon(Icons.Default.FullscreenExit, contentDescription = "Exit fullscreen", tint = Color.White)
-                }
-            }
+            AndroidView(
+                factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER); keepScreenOn = true } },
+                update = { it.player = player },
+                modifier = Modifier.fillMaxSize()
+            )
+            Controls(light = true)
             if (downloadStatus.isNotBlank()) {
                 DownloadStatusPanel(
                     status = downloadStatus, active = downloadActive, paused = downloadPaused,
                     bytes = downloadBytes, total = downloadTotal, onTogglePause = onTogglePause,
                     onCancel = onCancelDownload,
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)
+                    modifier = Modifier.align(Alignment.TopCenter).padding(10.dp)
                 )
             }
         }
     } else {
-        Column(Modifier.fillMaxSize().padding(14.dp)) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
-                Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2)
-                TextButton(onClick = { cyclePlaybackSpeed() }) { Text("${playbackSpeed}×") }
-                IconButton(onClick = { fullScreen = true }) {
-                    Icon(Icons.Default.Fullscreen, contentDescription = "Fullscreen")
-                }
+                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back to lessons") }
+                Text("NOW PLAYING", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.3.sp, modifier = Modifier.weight(1f))
+                IconButton(onClick = { fullScreen = true }) { Icon(Icons.Default.Fullscreen, "Fullscreen") }
             }
-            AndroidView(factory = { makePlayerView(it) }, update = { it.player = player }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-            if (playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING) {
-                Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Buffering video…", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                }
+            AndroidView(
+                factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER); keepScreenOn = true } },
+                update = { it.player = player },
+                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(18.dp))
+            )
+            if (playerError.isNotBlank()) {
+                Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { playerError = ""; player.prepare(); player.play() }) { Text("Retry playback") }
             }
-            if (playerError.isNotBlank()) Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(14.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onPrevious, enabled = hasPrevious, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Previous")
-                }
-                OutlinedButton(onClick = onNext, enabled = hasNext, modifier = Modifier.weight(1f)) {
-                    Text("Next")
-                    Spacer(Modifier.width(4.dp))
-                    Icon(Icons.Default.SkipNext, contentDescription = null)
-                }
-            }
-            Spacer(Modifier.height(8.dp))
+            Controls()
             Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Download, null)
                 Spacer(Modifier.width(8.dp))
                 Text("Download lecture")
             }
             if (downloadStatus.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
                 DownloadStatusPanel(
                     status = downloadStatus, active = downloadActive, paused = downloadPaused,
                     bytes = downloadBytes, total = downloadTotal, onTogglePause = onTogglePause,
@@ -827,6 +883,11 @@ private fun VideoScreen(
             }
         }
     }
+}
+
+private fun formatTime(ms: Long): String {
+    val seconds = ms.coerceAtLeast(0L) / 1000L
+    return String.format(java.util.Locale.US, "%d:%02d", seconds / 60L, seconds % 60L)
 }
 
 private fun formatBytes(value: Long): String {
