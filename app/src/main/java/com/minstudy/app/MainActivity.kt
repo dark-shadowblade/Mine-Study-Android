@@ -452,6 +452,22 @@ private fun VideoScreen(title: String, url: String, apiKey: String, onDownload: 
     }
 }
 
+private fun findStreamUrl(value: Any?): String? {
+    when (value) {
+        is JSONObject -> {
+            for (key in listOf("streamUrl", "stream_url", "videoUrl", "video_url", "url")) {
+                val candidate = value.optString(key)
+                if (candidate.startsWith("https://") || candidate.startsWith("http://")) return candidate
+            }
+            val keys = value.keys()
+            while (keys.hasNext()) findStreamUrl(value.opt(keys.next()))?.let { return it }
+        }
+        is JSONArray -> for (i in 0 until value.length()) findStreamUrl(value.opt(i))?.let { return it }
+        is String -> if (value.startsWith("https://") || value.startsWith("http://")) return value
+    }
+    return null
+}
+
 private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 private fun openExternal(context: Context, value: String) {
     try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(value)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) { }
