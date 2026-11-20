@@ -142,13 +142,30 @@ private class StudyApi(private val context: Context) {
     }
 
     fun list(value: Any?, chapterItems: Boolean = false): List<StudyItem> {
-        val array = findArray(value) ?: return emptyList()
+        // The working web app uses request() -> json.data ?? json and requires
+        // that result to be an array. Mirror that contract instead of picking
+        // an arbitrary nested array from the response.
+        val array = when (value) {
+            is JSONArray -> value
+            is JSONObject -> value.optJSONArray("data")
+                ?: value.optJSONArray(if (chapterItems) "chapters" else "subjects")
+                ?: findArray(value)
+            else -> null
+        } ?: return emptyList()
+
         return (0 until array.length()).mapNotNull { i ->
             val obj = array.optJSONObject(i) ?: return@mapNotNull null
-            val id = if (chapterItems) first(obj, "chapter_id", "_id", "id", "chapterId")
-                else first(obj, "_id", "videoId", "id", "subjectId", "chapter_id", "chapterId", "contentId")
-            if (id == null) return@mapNotNull null
-            val title = first(obj, "subject", "name", "title", "topic", "chapterName", "subjectName", "fileName") ?: "Untitled"
+            val id = if (chapterItems) {
+                first(obj, "chapter_id")
+            } else {
+                first(obj, "_id", "videoId", "id", "subjectId", "chapter_id", "chapterId", "contentId")
+            } ?: return@mapNotNull null
+
+            val title = if (chapterItems) {
+                first(obj, "name", "title", "chapterName")
+            } else {
+                first(obj, "subject", "name", "title", "topic", "subjectName", "fileName")
+            } ?: "Untitled"
             val sub = first(obj, "description", "duration", "type") ?: ""
             StudyItem(id, title, sub, obj)
         }
