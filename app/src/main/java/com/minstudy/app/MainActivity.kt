@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
@@ -216,6 +217,10 @@ private fun MineStudyApp() {
     var keyLink by remember { mutableStateOf("") }
     var keyStatus by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
+    var downloadRecords by remember { mutableStateOf(DownloadRepository.list(context)) }
+    var downloadStatus by remember { mutableStateOf("") }
+    var downloadBytes by remember { mutableStateOf(0L) }
+    var downloadTotal by remember { mutableStateOf(-1L) }
 
     fun loadSubjects() {
         busy = true; error = ""
@@ -276,7 +281,7 @@ private fun MineStudyApp() {
                             goBack()
                         }) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
                     },
-                    actions = { IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, contentDescription = "Settings") } },
+                    actions = { IconButton(onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }) { Icon(Icons.Default.FolderOpen, contentDescription = "Downloads") }; IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, contentDescription = "Settings") } },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0B0D14))
                 )
             },
@@ -358,7 +363,8 @@ private fun MineStudyApp() {
                             }
                         }, onRetry = { selectedChapter?.let { loadContents(it) } })
                     }
-                    "player" -> VideoScreen(currentTitle, currentVideo, apiKey, onDownload = { downloadVideo(context, currentVideo, apiKey, currentTitle) })
+                    "player" -> VideoScreen(currentTitle, currentVideo, onDownload = { /* download action connected below */ })
+                    "downloads" -> DownloadGallery(downloadRecords, onOpen = { record -> try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(record.uri), record.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) } catch (_: Exception) { Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show() } }, onRefresh = { downloadRecords = DownloadRepository.list(context) })
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
                 if (error.isNotBlank()) {
