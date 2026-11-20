@@ -373,7 +373,7 @@ private fun MineStudyApp() {
                             }
                         }, onRetry = { selectedChapter?.let { loadContents(it) } })
                     }
-                    "player" -> VideoScreen(currentTitle, currentVideo, onDownload = { Toast.makeText(context, "Use the download button beside the lecture in its section", Toast.LENGTH_SHORT).show() })
+                    "player" -> VideoScreen(currentTitle, currentVideo, onDownload = { Toast.makeText(context, "Return to the lecture list to download this item", Toast.LENGTH_SHORT).show() })
                     "downloads" -> DownloadGallery(downloadRecords, onOpen = { record -> try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(record.uri), record.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) } catch (_: Exception) { Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show() } }, onRefresh = { downloadRecords = DownloadRepository.list(context) })
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
@@ -477,29 +477,44 @@ private fun ItemList(
 }
 
 @Composable
-private fun VideoScreen(title: String, url: String, apiKey: String, onDownload: () -> Unit) {
+private fun VideoScreen(title: String, url: String, onDownload: () -> Unit) {
     val context = LocalContext.current
     val player = remember(url) {
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(ChunkQueryDataSourceFactory()))
-            .build().apply {
-                setMediaItem(MediaItem.fromUri(url))
-                prepare()
-                playWhenReady = true
-            }
+        ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(ChunkQueryDataSourceFactory())).build().apply {
+            setMediaItem(MediaItem.fromUri(url)); prepare(); playWhenReady = true
+        }
     }
-    DisposableEffect(player) { onDispose { player.release() } }
-    Column(Modifier.fillMaxWidth()) {
+    var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
+    var playerError by remember(player) { mutableStateOf("") }
+    DisposableEffect(player) {
+        val listener = object : com.google.android.exoplayer2.Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) { playbackState = state }
+            override fun onPlayerError(error: com.google.android.exoplayer2.PlaybackException) { playerError = error.message ?: "Playback failed" }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener); player.release() }
+    }
+    Column(Modifier.fillMaxSize()) {
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
-        AndroidView(
-            factory = { ctx -> PlayerView(ctx).apply { this.player = player; layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) } },
-            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-        )
-        Spacer(Modifier.height(12.dp))
-        Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text("Download lecture")
+        AndroidView(factory = { ctx -> PlayerView(ctx).apply {
+            this.player = player
+            useController = true
+            controllerAutoShow = true
+            controllerShowTimeoutMs = 5000
+            setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+            resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+        } }, update = { it.player = player }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+        if (playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Buffering video…", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+            }
         }
+        if (playerError.isNotBlank()) Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(12.dp))
+        OutlinedButton(onClick = onDownload, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text("Download lecture") }
     }
 }
 
