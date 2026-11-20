@@ -105,7 +105,11 @@ private class StudyApi(private val context: Context) {
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val body = stream.bufferedReader().use { it.readText() }
             if (code !in 200..299) throw IllegalStateException("HTTP $code: $body")
-            JSONObject(body)
+            val json = JSONObject(body)
+            if (!json.optBoolean("success", true)) {
+                throw IllegalStateException(json.optString("message", "API returned an error"))
+            }
+            json
         } finally { connection.disconnect() }
     }
 
@@ -375,6 +379,11 @@ private fun MineStudyApp() {
                         }
                     }, modifier = Modifier.fillMaxWidth()) { Text("Verify API key") }
                     if (keyStatus.isNotBlank()) Text(keyStatus, style = MaterialTheme.typography.bodySmall, color = if (keyStatus.contains("Verified successfully")) Color(0xFF71D6C5) else Color.Gray)
+                    TextButton(onClick = {
+                        api.apiKey = ""
+                        apiKey = ""
+                        keyStatus = "Saved API key cleared."
+                    }) { Text("Clear saved key", color = Color(0xFFFF8A8A)) }
                     if (keyLink.isNotBlank()) Text(keyLink, style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5A9FF))
                 }
             },
