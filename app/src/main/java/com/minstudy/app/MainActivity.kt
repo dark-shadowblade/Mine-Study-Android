@@ -299,7 +299,20 @@ private fun MineStudyApp() {
                                 FilterChip(selected = type == key, onClick = { selectedChapter?.let { loadContents(it, key) } }, label = { Text(label, fontSize = 11.sp) })
                             }
                         }
-                        ItemList("Learning material", contents, busy, error, onSelect = { item ->
+                        ItemList(
+                            "Learning material", contents, busy, error,
+                            onDownload = if (type == "videos" || type == "DppVideos") { item ->
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        val detail = api.get("/batch/\${api.batchId}/subject/\${enc(selectedSubject!!.id)}/chapter/\${enc(selectedChapter!!.id)}/content/\${enc(item.id)}")
+                                        val stream = findStreamUrl(detail) ?: throw IllegalStateException("No downloadable video URL was returned")
+                                        downloadVideo(context, stream, apiKey, item.title)
+                                    } catch (e: Exception) { error = e.message ?: "Download failed" }
+                                    finally { busy = false }
+                                }
+                            } else null,
+                            onSelect = { item ->
                             if (type == "videos" || type == "DppVideos") {
                                 busy = true
                                 scope.launch {
