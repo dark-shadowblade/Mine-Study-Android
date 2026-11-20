@@ -248,6 +248,16 @@ private fun MineStudyApp() {
             finally { busy = false }
         }
     }
+    LaunchedEffect(apiKey, batch) {
+        if (apiKey.isNotBlank()) {
+            api.batchId = batch
+            loadSubjects()
+        } else {
+            screen = "home"
+            error = "Add and verify your API key in Settings to load subjects."
+        }
+    }
+
     fun loadChapters(subject: StudyItem) {
         selectedSubject = subject; busy = true; error = ""
         scope.launch {
@@ -380,34 +390,26 @@ private fun MineStudyApp() {
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = if (screen == "player") 0.dp else 18.dp)) {
                 when (screen) {
                     "home" -> {
+                        Spacer(Modifier.height(26.dp))
+                        Text("WELCOME TO MINE STUDY", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.5.sp)
+                        Spacer(Modifier.height(10.dp))
+                        Text("Your classes,\nall in one place.", fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(18.dp))
-                        Text("LEARN AT YOUR PACE", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 2.sp)
-                        Text("Pick up where\nyou left off.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(20.dp))
-                        Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF191E2D))) {
-                            Column(Modifier.fillMaxWidth().padding(20.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.MenuBook, null, tint = Color(0xFF9B8CFF))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(20.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A))
+                        ) {
+                            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Connect your study library", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text("Add your API key to load subjects automatically.", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                                Button(onClick = { showSettings = true }, modifier = Modifier.fillMaxWidth()) {
+                                    Icon(Icons.Default.Key, null)
                                     Spacer(Modifier.width(8.dp))
-                                    Text("MY LIBRARY", fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-                                }
-                                Spacer(Modifier.height(12.dp))
-                                Text("Browse your batches, subjects, chapters and lessons.", color = Color.LightGray)
-                                Spacer(Modifier.height(18.dp))
-                                Button(onClick = { loadSubjects() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
-                                    Text("Open library")
+                                    Text("Open settings")
                                 }
                             }
                         }
-                        Spacer(Modifier.height(16.dp))
-                        Text("SELECTED BATCH", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = batch == BATCH_ONE, onClick = { batch = BATCH_ONE; api.batchId = batch }, label = { Text("Server 1") })
-                            FilterChip(selected = batch == BATCH_TWO, onClick = { batch = BATCH_TWO; api.batchId = batch }, label = { Text("Server 2") })
-                        }
-                        Spacer(Modifier.height(14.dp))
-                        Text("API connection: " + if (apiKey.isBlank()) "Key required" else "Key saved", color = if (apiKey.isBlank()) Color(0xFFFFC078) else Color(0xFF71D6C5))
                     }
                     "subjects" -> ItemList("Subjects", subjects, busy, error, onSelect = { loadChapters(it) }, onRetry = { loadSubjects() })
                     "chapters" -> {
@@ -475,11 +477,8 @@ private fun MineStudyApp() {
                             startDownload(currentTitle, category, true) { currentVideo }
                         }
                     )
-                    "downloads" -> DownloadGallery(downloadRecords, onOpen = { record -> try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(record.uri), record.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) } catch (_: Exception) { Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show() } }, onRefresh = { downloadRecords = DownloadRepository.list(context) })
-                }
-                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                if (screen != "player" && downloadStatus.isNotBlank()) {
-                    DownloadStatusPanel(
+                    "downloads" -> DownloadGallery(
+                        records = downloadRecords,
                         status = downloadStatus,
                         active = downloadActive,
                         paused = downloadPaused,
@@ -490,9 +489,20 @@ private fun MineStudyApp() {
                             downloadPaused = next
                             downloadControl?.paused = next
                         },
-                        onCancel = { downloadControl?.cancelled = true }
+                        onCancel = { downloadControl?.cancelled = true },
+                        onOpen = { record ->
+                            try {
+                                context.startActivity(Intent(Intent.ACTION_VIEW)
+                                    .setDataAndType(Uri.parse(record.uri), record.mime)
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                            } catch (_: Exception) {
+                                Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onRefresh = { downloadRecords = DownloadRepository.list(context) }
                     )
                 }
+                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
                 if (error.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     Text(error, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
@@ -507,6 +517,11 @@ private fun MineStudyApp() {
             title = { Text("App settings") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Batch server", fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = batch == BATCH_ONE, onClick = { batch = BATCH_ONE }, label = { Text("Server 1") })
+                        FilterChip(selected = batch == BATCH_TWO, onClick = { batch = BATCH_TWO }, label = { Text("Server 2") })
+                    }
                     Text("API key", fontWeight = FontWeight.SemiBold)
                     OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Paste your API key") })
                     Text("The key is stored locally on this device. It is not included in the app source.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
