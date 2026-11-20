@@ -849,7 +849,7 @@ private fun VideoScreen(
                 update = { it.player = player },
                 modifier = Modifier.fillMaxSize()
             )
-            Controls(light = true)
+            Controls(Modifier.align(Alignment.BottomCenter), light = true)
             if (downloadStatus.isNotBlank()) {
                 DownloadStatusPanel(
                     status = downloadStatus, active = downloadActive, paused = downloadPaused,
