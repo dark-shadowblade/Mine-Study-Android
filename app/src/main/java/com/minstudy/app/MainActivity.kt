@@ -305,7 +305,7 @@ private fun MineStudyApp() {
                                 scope.launch {
                                     try {
                                         val detail = api.get("/batch/${api.batchId}/subject/${enc(selectedSubject!!.id)}/chapter/${enc(selectedChapter!!.id)}/content/${enc(item.id)}")
-                                        currentVideo = api.findString(detail, setOf("streamUrl", "stream_url", "videoUrl", "video_url", "url")) ?: ""
+                                        currentVideo = findStreamUrl(detail) ?: ""
                                         if (currentVideo.isBlank()) error = "No playable video URL was returned."
                                         else { currentTitle = item.title; screen = "player" }
                                     } catch (e: Exception) { error = e.message ?: "Unable to open lesson" }
@@ -372,6 +372,7 @@ private fun MineStudyApp() {
 @Composable
 private fun ItemList(
     heading: String, items: List<StudyItem>, busy: Boolean, error: String,
+    onDownload: ((StudyItem) -> Unit)? = null,
     onSelect: (StudyItem) -> Unit, onRetry: () -> Unit
 ) {
     Text(heading, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -395,6 +396,11 @@ private fun ItemList(
                     Column(Modifier.weight(1f)) {
                         Text(item.title, fontWeight = FontWeight.SemiBold)
                         if (item.subtitle.isNotBlank()) Text(item.subtitle, color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                    }
+                    if (onDownload != null) {
+                        IconButton(onClick = { onDownload(item) }) {
+                            Icon(Icons.Default.Download, contentDescription = "Download", tint = Color(0xFF71D6C5))
+                        }
                     }
                     Text("›", color = Color.Gray, fontSize = 25.sp)
                 }
