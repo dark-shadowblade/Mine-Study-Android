@@ -11,6 +11,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.ui.unit.dp
 import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.upstream.DataSpec
@@ -180,7 +186,7 @@ fun DownloadGallery(
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                         ) {
                             androidx.compose.material3.Icon(
-                                imageVector = if (record.mime.startsWith("video")) androidx.compose.material.icons.Icons.Default.PlayArrow else androidx.compose.material.icons.Icons.Default.MenuBook,
+                                imageVector = if (record.mime.startsWith("video")) Icons.Default.PlayArrow else Icons.Default.MenuBook,
                                 contentDescription = null
                             )
                             androidx.compose.foundation.layout.Spacer(Modifier.width(12.dp))
@@ -189,7 +195,7 @@ fun DownloadGallery(
                                 androidx.compose.material3.Text("${record.category} • ${record.bytes / (1024 * 1024)} MB", color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
                             }
                             androidx.compose.material3.IconButton(onClick = { onOpen(record) }) {
-                                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.OpenInNew, contentDescription = "Open")
+                                androidx.compose.material3.Icon(Icons.Default.ArrowForward, contentDescription = "Open")
                             }
                         }
                     }
