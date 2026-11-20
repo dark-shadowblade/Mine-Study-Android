@@ -85,7 +85,8 @@ class ChunkQueryDataSource : BaseDataSource(false) {
         totalLength = match.groupValues[3].toLong()
         val expectedEnd = minOf(end, totalLength - 1)
         val expectedBytes = expectedEnd - position + 1
-        if (rangeStart != position || rangeEnd != expectedEnd || expectedBytes <= 0L ||
+        if (rangeStart != position || rangeEnd < rangeStart || rangeEnd > end ||
+            rangeEnd >= totalLength || expectedBytes <= 0L ||
             (conn.contentLengthLong >= 0L && conn.contentLengthLong != expectedBytes)) {
             conn.disconnect()
             throw IOException("CDN returned an incomplete or unexpected byte range")
