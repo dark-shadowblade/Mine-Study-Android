@@ -52,6 +52,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -108,11 +109,16 @@ private class StudyApi(private val context: Context) {
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val body = stream.bufferedReader().use { it.readText() }
             if (code !in 200..299) throw IllegalStateException("HTTP $code: $body")
-            val json = JSONObject(body)
-            if (!json.optBoolean("success", true)) {
-                throw IllegalStateException(json.optString("message", "API returned an error"))
+            // Match browser response.json(): the API may return an object or array.
+            val payload = JSONTokener(body).nextValue()
+            if (payload is JSONObject) {
+                if (payload.has("success") && !payload.optBoolean("success", true)) {
+                    throw IllegalStateException(payload.optString("message", "API returned an error"))
+                }
+                payload.opt("data")?.takeUnless { it == JSONObject.NULL } ?: payload
+            } else {
+                payload
             }
-            json.opt("data")?.takeUnless { it == JSONObject.NULL } ?: json
         } finally { connection.disconnect() }
     }
 
@@ -127,7 +133,7 @@ private class StudyApi(private val context: Context) {
     suspend fun verifyKey(candidate: String): Int {
         if (candidate.isBlank()) throw IllegalStateException("Enter an API key first")
         val response = get("/batch/$batchId/subject", candidate)
-        return list(response).size
+        return list(response, "subjects").size
     }
 
     fun findString(value: Any?, names: Set<String>): String? {
@@ -142,32 +148,31 @@ private class StudyApi(private val context: Context) {
         return null
     }
 
-    fun list(value: Any?, chapterItems: Boolean = false): List<StudyItem> {
-        // The working web app uses request() -> json.data ?? json and requires
-        // that result to be an array. Mirror that contract instead of picking
-        // an arbitrary nested array from the response.
-        val array = when (value) {
-            is JSONArray -> value
-            is JSONObject -> value.optJSONArray("data")
-                ?: throw IllegalStateException("Unexpected API response: expected data array")
-            else -> throw IllegalStateException("Unexpected API response: expected data array")
-        }
+    fun list(value: Any?, kind: String): List<StudyItem> {
+        // Mine-Study request() returns json.data ?? json; each caller expects
+        // that exact payload to be an array.
+        val array = value as? JSONArray
+            ?: throw IllegalStateException("Unexpected API response: expected an array for $kind")
 
         return (0 until array.length()).mapNotNull { i ->
             val obj = array.optJSONObject(i) ?: return@mapNotNull null
-            val id = if (chapterItems) {
-                first(obj, "chapter_id")
-            } else {
-                first(obj, "_id", "videoId", "id", "subjectId", "chapter_id", "chapterId", "contentId")
+            val id = when (kind) {
+                "subjects" -> first(obj, "_id")
+                "chapters" -> first(obj, "chapter_id")
+                "contents" -> first(obj, "_id", "videoId", "id")
+                else -> null
             } ?: return@mapNotNull null
 
-            val title = if (chapterItems) {
-                first(obj, "name", "title", "chapterName")
-            } else {
-                first(obj, "subject", "name", "title", "topic", "subjectName", "fileName")
+            val title = when (kind) {
+                "subjects" -> first(obj, "subject")
+                "chapters" -> first(obj, "name")
+                "contents" -> first(obj, "name", "topic")
+                else -> null
             } ?: "Untitled"
-            val sub = first(obj, "description", "duration", "type") ?: ""
-            StudyItem(id, title, sub, obj)
+            val subtitle = if (kind == "contents") {
+                first(obj, "duration", "date", "topic") ?: ""
+            } else ""
+            StudyItem(id, title, subtitle, obj)
         }
     }
 
@@ -216,7 +221,7 @@ private fun MineStudyApp() {
         busy = true; error = ""
         scope.launch {
             try {
-                subjects = api.list(api.get("/batch/${api.batchId}/subject"))
+                subjects = api.list(api.get("/batch/${api.batchId}/subject"), "subjects")
                 screen = "subjects"
             } catch (e: Exception) { error = e.message ?: "Could not load batches" }
             finally { busy = false }
@@ -226,7 +231,7 @@ private fun MineStudyApp() {
         selectedSubject = subject; busy = true; error = ""
         scope.launch {
             try {
-                chapters = api.list(api.get("/batch/${api.batchId}/subject/${enc(subject.id)}/chapter"), chapterItems = true)
+                chapters = api.list(api.get("/batch/${api.batchId}/subject/${enc(subject.id)}/chapter"), "chapters")
                 screen = "chapters"
             } catch (e: Exception) { error = e.message ?: "Could not load chapters" }
             finally { busy = false }
@@ -237,7 +242,7 @@ private fun MineStudyApp() {
         scope.launch {
             try {
                 val path = "/batch/${api.batchId}/subject/${enc(selectedSubject!!.id)}/chapter/${enc(chapter.id)}/content?type=${enc(contentType)}"
-                contents = api.list(api.get(path))
+                contents = api.list(api.get(path), "contents")
                 screen = "contents"
             } catch (e: Exception) { error = e.message ?: "Could not load lessons" }
             finally { busy = false }
