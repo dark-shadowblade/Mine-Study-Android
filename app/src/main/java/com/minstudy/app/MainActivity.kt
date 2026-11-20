@@ -1,6 +1,5 @@
 package com.minstudy.app
 
-import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.content.ClipData
@@ -8,6 +7,12 @@ import android.content.ClipboardManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.content.ContentValues
+import android.provider.MediaStore
+import android.os.Build
+import android.widget.Toast
+import java.io.File
+import java.io.FileOutputStream
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -430,13 +435,53 @@ private fun openExternal(context: Context, value: String) {
     try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(value)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) { }
 }
 private fun downloadVideo(context: Context, url: String, key: String, title: String) {
-    try {
-        val request = DownloadManager.Request(Uri.parse(url))
-            .setTitle(title)
-            .setDescription("Downloading from Mine Study")
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, title.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".mp4")
-        if (key.isNotBlank()) request.addRequestHeader("x-api-key", key)
-        (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-    } catch (_: Exception) { }
+    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+        var mediaUri: Uri? = null
+        try {
+            val safeName = title.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "MineStudy_Lecture" } + ".mp4"
+            val resolver = context.contentResolver
+            val output = if (Build.VERSION.SDK_INT >= 29) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Mine Study")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                mediaUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IllegalStateException("Could not create the download file")
+                resolver.openOutputStream(mediaUri!!, "w")
+            } else {
+                val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    ?: throw IllegalStateException("Downloads folder unavailable")
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, safeName)
+                mediaUri = Uri.fromFile(file)
+                FileOutputStream(file)
+            } ?: throw IllegalStateException("Could not open the download file")
+            output.use { out ->
+                val source = ChunkQueryDataSource()
+                try {
+                    source.open(DataSpec(Uri.parse(url)))
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val count = source.read(buffer, 0, buffer.size)
+                        if (count == com.google.android.exoplayer2.C.RESULT_END_OF_INPUT) break
+                        out.write(buffer, 0, count)
+                    }
+                } finally { source.close() }
+            }
+            if (Build.VERSION.SDK_INT >= 29) {
+                val values = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                resolver.update(mediaUri!!, values, null, null)
+            }
+            android.os.Handler(context.mainLooper).post {
+                Toast.makeText(context, "Download saved in Downloads/Mine Study", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            mediaUri?.let { context.contentResolver.delete(it, null, null) }
+            android.os.Handler(context.mainLooper).post {
+                Toast.makeText(context, "Download failed: " + (e.message ?: "Unknown error"), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 }
