@@ -373,7 +373,20 @@ private fun MineStudyApp() {
                             }
                         }, onRetry = { selectedChapter?.let { loadContents(it) } })
                     }
-                    "player" -> VideoScreen(currentTitle, currentVideo, onDownload = { Toast.makeText(context, "Return to the lecture list to download this item", Toast.LENGTH_SHORT).show() })
+                    "player" -> VideoScreen(currentTitle, currentVideo, onDownload = {
+                        scope.launch {
+                            try {
+                                val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
+                                downloadStatus = "Downloading " + currentTitle
+                                DownloadRepository.download(context, currentVideo, currentTitle, category, true) { bytes, total ->
+                                    android.os.Handler(context.mainLooper).post { downloadBytes = bytes; downloadTotal = total }
+                                }
+                                downloadRecords = DownloadRepository.list(context)
+                                downloadStatus = "Download saved: " + currentTitle
+                                Toast.makeText(context, "Saved in Downloads/Mine Study/" + category, Toast.LENGTH_LONG).show()
+                            } catch (e: Exception) { downloadStatus = "Download failed: " + (e.message ?: "Unknown error"); error = downloadStatus }
+                        }
+                    })
                     "downloads" -> DownloadGallery(downloadRecords, onOpen = { record -> try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(record.uri), record.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) } catch (_: Exception) { Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show() } }, onRefresh = { downloadRecords = DownloadRepository.list(context) })
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
