@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -35,6 +36,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
 import com.google.android.exoplayer2.ExoPlayer
+import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
+import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
@@ -107,8 +110,8 @@ private class StudyApi(private val context: Context) {
         val array = findArray(value) ?: return emptyList()
         return (0 until array.length()).mapNotNull { i ->
             val obj = array.optJSONObject(i) ?: return@mapNotNull null
-            val id = first(obj, "id", "_id", "subjectId", "chapterId", "contentId", "videoId") ?: return@mapNotNull null
-            val title = first(obj, "name", "title", "topic", "chapterName", "subjectName", "fileName") ?: "Untitled"
+            val id = first(obj, "_id", "id", "chapter_id", "subjectId", "chapterId", "contentId", "videoId") ?: return@mapNotNull null
+            val title = first(obj, "subject", "name", "title", "topic", "chapterName", "subjectName", "fileName") ?: "Untitled"
             val sub = first(obj, "description", "duration", "type") ?: ""
             StudyItem(id, title, sub, obj)
         }
@@ -137,6 +140,7 @@ private class StudyApi(private val context: Context) {
 private fun MineStudyApp() {
     val context = LocalContext.current
     val api = remember { StudyApi(context) }
+    val scope = rememberCoroutineScope()
     var apiKey by remember { mutableStateOf(api.apiKey) }
     var batch by remember { mutableStateOf(api.batchId) }
     var screen by remember { mutableStateOf("home") }
@@ -155,7 +159,7 @@ private fun MineStudyApp() {
 
     fun loadSubjects() {
         busy = true; error = ""
-        kotlinx.coroutines.MainScope().launch {
+        scope.launch {
             try {
                 subjects = api.list(api.get("/batch/${api.batchId}/subject"))
                 screen = "subjects"
@@ -165,7 +169,7 @@ private fun MineStudyApp() {
     }
     fun loadChapters(subject: StudyItem) {
         selectedSubject = subject; busy = true; error = ""
-        kotlinx.coroutines.MainScope().launch {
+        scope.launch {
             try {
                 chapters = api.list(api.get("/batch/${api.batchId}/subject/${enc(subject.id)}/chapter"))
                 screen = "chapters"
@@ -175,7 +179,7 @@ private fun MineStudyApp() {
     }
     fun loadContents(chapter: StudyItem, contentType: String = type) {
         selectedChapter = chapter; type = contentType; busy = true; error = ""
-        kotlinx.coroutines.MainScope().launch {
+        scope.launch {
             try {
                 val path = "/batch/${api.batchId}/subject/${enc(selectedSubject!!.id)}/chapter/${enc(chapter.id)}/content?type=${enc(contentType)}"
                 contents = api.list(api.get(path))
@@ -184,6 +188,16 @@ private fun MineStudyApp() {
             finally { busy = false }
         }
     }
+
+    fun goBack() {
+        screen = when (screen) {
+            "player" -> "contents"
+            "contents" -> "chapters"
+            "chapters" -> "subjects"
+            else -> "home"
+        }
+    }
+    BackHandler(enabled = screen != "home") { goBack() }
 
     MaterialTheme(colorScheme = darkColorScheme(
         primary = Color(0xFF9B8CFF), secondary = Color(0xFF71D6C5),
@@ -199,7 +213,7 @@ private fun MineStudyApp() {
                     } },
                     navigationIcon = {
                         if (screen != "home") IconButton(onClick = {
-                            screen = when (screen) { "player" -> "contents"; "contents" -> "chapters"; "chapters" -> "subjects"; else -> "home" }
+                            goBack()
                         }) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
                     },
                     actions = { IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, contentDescription = "Settings") } },
@@ -255,7 +269,7 @@ private fun MineStudyApp() {
                         ItemList("Learning material", contents, busy, error, onSelect = { item ->
                             if (type == "videos" || type == "DppVideos") {
                                 busy = true
-                                kotlinx.coroutines.MainScope().launch {
+                                scope.launch {
                                     try {
                                         val detail = api.get("/batch/${api.batchId}/subject/${enc(selectedSubject!!.id)}/chapter/${enc(selectedChapter!!.id)}/content/${enc(item.id)}")
                                         currentVideo = api.findString(detail, setOf("streamUrl", "stream_url", "videoUrl", "video_url", "url")) ?: ""
@@ -265,7 +279,7 @@ private fun MineStudyApp() {
                                     finally { busy = false }
                                 }
                             } else {
-                                val url = api.findString(item.raw, setOf("url", "fileUrl", "file_url", "downloadUrl"))
+                                val url = api.findString(item.raw, setOf("baseUrl", "base_url", "url", "fileUrl", "file_url", "downloadUrl"))
                                 if (url != null) openExternal(context, url) else error = "No document link found for this item."
                             }
                         }, onRetry = { selectedChapter?.let { loadContents(it) } })
@@ -291,7 +305,7 @@ private fun MineStudyApp() {
                     OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Paste your API key") })
                     Text("The key is stored locally on this device. It is not included in the app source.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     OutlinedButton(onClick = {
-                        kotlinx.coroutines.MainScope().launch {
+                        scope.launch {
                             try {
                                 keyLink = api.generateKeyLink()
                                 openExternal(context, keyLink)
@@ -344,13 +358,17 @@ private fun ItemList(
 @Composable
 private fun VideoScreen(title: String, url: String, apiKey: String, onDownload: () -> Unit) {
     val context = LocalContext.current
-    val player = remember(url) {
-        ExoPlayer.Builder(context).build().apply {
-            val item = MediaItem.fromUri(url)
-            setMediaItem(item)
-            prepare()
-            playWhenReady = true
-        }
+    val player = remember(url, apiKey) {
+        val httpFactory = DefaultHttpDataSource.Factory().setDefaultRequestProperties(
+            if (apiKey.isNotBlank()) mapOf("x-api-key" to apiKey) else emptyMap()
+        )
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(url))
+                prepare()
+                playWhenReady = true
+            }
     }
     DisposableEffect(player) { onDispose { player.release() } }
     Column(Modifier.fillMaxWidth()) {
