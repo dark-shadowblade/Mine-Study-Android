@@ -92,13 +92,16 @@ private class StudyApi(private val context: Context) {
         get() = prefs.getString("batch_id", BATCH_ONE) ?: BATCH_ONE
         set(value) { prefs.edit().putString("batch_id", value).apply() }
 
-    suspend fun get(path: String, keyOverride: String? = null): JSONObject = withContext(Dispatchers.IO) {
+    // Mirrors Mine-Study/index.html request(): validate the envelope, then
+    // return json.data ?? json so callers receive the actual API payload.
+    suspend fun get(path: String, keyOverride: String? = null): Any? = withContext(Dispatchers.IO) {
         val connection = (URL(API + path).openConnection() as HttpURLConnection)
         try {
             connection.requestMethod = "GET"
             connection.connectTimeout = 15000
             connection.readTimeout = 25000
             connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Content-Type", "application/json")
             val requestKey = keyOverride ?: apiKey
             if (requestKey.isNotBlank()) connection.setRequestProperty("x-api-key", requestKey)
             val code = connection.responseCode
@@ -109,13 +112,12 @@ private class StudyApi(private val context: Context) {
             if (!json.optBoolean("success", true)) {
                 throw IllegalStateException(json.optString("message", "API returned an error"))
             }
-            json
+            json.opt("data")?.takeUnless { it == JSONObject.NULL } ?: json
         } finally { connection.disconnect() }
     }
 
     suspend fun generateKeyLink(): String {
         val result = get("/auth/generate?server=1", "")
-        if (!result.optBoolean("success", true)) throw IllegalStateException(result.optString("message", "Key generation failed"))
         val link = findString(result, setOf("keyUrl", "key_url"))
             ?: throw IllegalStateException("The server did not return data.keyUrl")
         if (!link.startsWith("https://", ignoreCase = true)) throw IllegalStateException("The server returned an invalid key link")
@@ -125,7 +127,6 @@ private class StudyApi(private val context: Context) {
     suspend fun verifyKey(candidate: String): Int {
         if (candidate.isBlank()) throw IllegalStateException("Enter an API key first")
         val response = get("/batch/$batchId/subject", candidate)
-        if (!response.optBoolean("success", true)) throw IllegalStateException(response.optString("message", "API key rejected"))
         return list(response).size
     }
 
