@@ -21,16 +21,27 @@ class ChunkQueryDataSource : BaseDataSource(false) {
     private var requestedRemaining = C.LENGTH_UNSET.toLong()
     private var opened = false
 
+    val discoveredLength: Long
+        get() = if (totalLength == C.LENGTH_UNSET.toLong()) C.LENGTH_UNSET.toLong() else totalLength
+
+    val isAtChunkBoundary: Boolean
+        get() = chunkRemaining == 0L
+
     override fun open(dataSpec: DataSpec): Long {
         transferInitializing(dataSpec)
         originalUri = dataSpec.uri
         position = dataSpec.position
+        totalLength = C.LENGTH_UNSET.toLong()
         requestedRemaining = dataSpec.length
-        if (requestedRemaining != C.LENGTH_UNSET.toLong()) totalLength = position + requestedRemaining
         openChunk()
+        if (requestedRemaining == C.LENGTH_UNSET.toLong()) {
+            requestedRemaining = (totalLength - position).coerceAtLeast(0L)
+        } else if (totalLength != C.LENGTH_UNSET.toLong()) {
+            requestedRemaining = minOf(requestedRemaining, (totalLength - position).coerceAtLeast(0L))
+        }
         opened = true
         transferStarted(dataSpec)
-        return dataSpec.length
+        return requestedRemaining
     }
 
     private fun openChunk() {
@@ -41,6 +52,9 @@ class ChunkQueryDataSource : BaseDataSource(false) {
         val maxEnd = position + CHUNK_SIZE - 1
         val end = if (totalLength == C.LENGTH_UNSET.toLong()) maxEnd else minOf(maxEnd, totalLength - 1)
         val base = originalUri ?: throw IOException("Missing stream URL")
+        if (!base.scheme.equals("https", true) || !Regex("a\\d+\\.stmvv1\\.xyz", RegexOption.IGNORE_CASE).matches(base.host ?: "")) {
+            throw IOException("Invalid video CDN host")
+        }
         val builder = base.buildUpon()
         for (name in base.queryParameterNames) {
             if (name != "s" && name != "e") {
@@ -69,13 +83,16 @@ class ChunkQueryDataSource : BaseDataSource(false) {
         val rangeStart = match.groupValues[1].toLong()
         val rangeEnd = match.groupValues[2].toLong()
         totalLength = match.groupValues[3].toLong()
-        if (rangeStart != position || rangeEnd < rangeStart || rangeEnd >= totalLength) {
+        val expectedEnd = minOf(end, totalLength - 1)
+        val expectedBytes = expectedEnd - position + 1
+        if (rangeStart != position || rangeEnd != expectedEnd || expectedBytes <= 0L ||
+            (conn.contentLengthLong >= 0L && conn.contentLengthLong != expectedBytes)) {
             conn.disconnect()
-            throw IOException("CDN returned an unexpected byte range")
+            throw IOException("CDN returned an incomplete or unexpected byte range")
         }
         connection = conn
         stream = conn.inputStream
-        chunkRemaining = rangeEnd - rangeStart + 1
+        chunkRemaining = expectedBytes
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
