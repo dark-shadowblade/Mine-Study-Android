@@ -120,7 +120,7 @@ private class StudyApi(private val context: Context) {
 
     suspend fun verifyKey(candidate: String): Int {
         if (candidate.isBlank()) throw IllegalStateException("Enter an API key first")
-        val response = get("/batch/$BATCH_ONE/subject", candidate)
+        val response = get("/batch/$batchId/subject", candidate)
         if (!response.optBoolean("success", true)) throw IllegalStateException(response.optString("message", "API key rejected"))
         return list(response).size
     }
@@ -302,6 +302,7 @@ private fun MineStudyApp() {
                         }
                         ItemList(
                             "Learning material", contents, busy, error,
+                            actionLabel = if (type == "videos" || type == "DppVideos") "Play" else "Open PDF",
                             onDownload = if (type == "videos" || type == "DppVideos") { item ->
                                 scope.launch {
                                     busy = true
@@ -386,6 +387,7 @@ private fun MineStudyApp() {
 @Composable
 private fun ItemList(
     heading: String, items: List<StudyItem>, busy: Boolean, error: String,
+    actionLabel: String = "Open",
     onDownload: ((StudyItem) -> Unit)? = null,
     onSelect: (StudyItem) -> Unit, onRetry: () -> Unit
 ) {
@@ -411,12 +413,12 @@ private fun ItemList(
                         Text(item.title, fontWeight = FontWeight.SemiBold)
                         if (item.subtitle.isNotBlank()) Text(item.subtitle, color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                     }
+                    TextButton(onClick = { onSelect(item) }) { Text(actionLabel) }
                     if (onDownload != null) {
                         IconButton(onClick = { onDownload(item) }) {
                             Icon(Icons.Default.Download, contentDescription = "Download", tint = Color(0xFF71D6C5))
                         }
                     }
-                    Text("›", color = Color.Gray, fontSize = 25.sp)
                 }
             }
         }
