@@ -455,6 +455,17 @@ private fun MineStudyApp() {
                         onPrevious = { playLecture(currentItemIndex - 1) },
                         onNext = { playLecture(currentItemIndex + 1) },
                         onBack = { screen = "contents" },
+                        downloadStatus = downloadStatus,
+                        downloadActive = downloadActive,
+                        downloadPaused = downloadPaused,
+                        downloadBytes = downloadBytes,
+                        downloadTotal = downloadTotal,
+                        onTogglePause = {
+                            val next = !downloadPaused
+                            downloadPaused = next
+                            downloadControl?.paused = next
+                        },
+                        onCancelDownload = { downloadControl?.cancelled = true },
                         onDownload = {
                             val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
                             startDownload(currentTitle, category, true) { currentVideo }
@@ -463,31 +474,20 @@ private fun MineStudyApp() {
                     "downloads" -> DownloadGallery(downloadRecords, onOpen = { record -> try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(record.uri), record.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) } catch (_: Exception) { Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show() } }, onRefresh = { downloadRecords = DownloadRepository.list(context) })
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                if (downloadStatus.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(downloadStatus, modifier = Modifier.weight(1f), color = if (downloadStatus.startsWith("Download failed")) Color(0xFFFF8A8A) else Color(0xFF71D6C5), style = MaterialTheme.typography.bodySmall, maxLines = 2)
-                        if (downloadActive) {
-                            TextButton(onClick = {
-                                val next = !downloadPaused
-                                downloadPaused = next
-                                downloadControl?.paused = next
-                            }) { Text(if (downloadPaused) "Resume" else "Pause") }
-                            TextButton(onClick = { downloadControl?.cancelled = true }) {
-                                Text("Cancel", color = Color(0xFFFF8A8A))
-                            }
-                        }
-                    }
-                    if (downloadActive) {
-                        if (downloadTotal > 0L) {
-                            val fraction = (downloadBytes.toFloat() / downloadTotal.toFloat()).coerceIn(0f, 1f)
-                            LinearProgressIndicator(progress = fraction, modifier = Modifier.fillMaxWidth())
-                            Text("${formatBytes(downloadBytes)} / ${formatBytes(downloadTotal)}  •  ${(fraction * 100).toInt()}%", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
-                        } else {
-                            LinearProgressIndicator(Modifier.fillMaxWidth())
-                            Text(formatBytes(downloadBytes) + " downloaded", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
+                if (screen != "player" && downloadStatus.isNotBlank()) {
+                    DownloadStatusPanel(
+                        status = downloadStatus,
+                        active = downloadActive,
+                        paused = downloadPaused,
+                        bytes = downloadBytes,
+                        total = downloadTotal,
+                        onTogglePause = {
+                            val next = !downloadPaused
+                            downloadPaused = next
+                            downloadControl?.paused = next
+                        },
+                        onCancel = { downloadControl?.cancelled = true }
+                    )
                 }
                 if (error.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
@@ -596,6 +596,42 @@ private fun ItemList(
 }
 
 @Composable
+private fun DownloadStatusPanel(
+    status: String,
+    active: Boolean,
+    paused: Boolean,
+    bytes: Long,
+    total: Long,
+    onTogglePause: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier.fillMaxWidth()
+            .background(Color(0xDD151925), RoundedCornerShape(14.dp))
+            .padding(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(status, modifier = Modifier.weight(1f), color = if (status.startsWith("Download failed")) Color(0xFFFF8A8A) else Color(0xFF71D6C5), style = MaterialTheme.typography.bodySmall, maxLines = 2)
+            if (active) {
+                TextButton(onClick = onTogglePause) { Text(if (paused) "Resume" else "Pause") }
+                TextButton(onClick = onCancel) { Text("Cancel", color = Color(0xFFFF8A8A)) }
+            }
+        }
+        if (active) {
+            if (total > 0L) {
+                val fraction = (bytes.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                LinearProgressIndicator(progress = fraction, modifier = Modifier.fillMaxWidth())
+                Text("${formatBytes(bytes)} / ${formatBytes(total)}  •  ${(fraction * 100).toInt()}%", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+            } else {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(formatBytes(bytes) + " downloaded", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
 private fun VideoScreen(
     title: String,
     url: String,
@@ -604,6 +640,13 @@ private fun VideoScreen(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
+    downloadStatus: String,
+    downloadActive: Boolean,
+    downloadPaused: Boolean,
+    downloadBytes: Long,
+    downloadTotal: Long,
+    onTogglePause: () -> Unit,
+    onCancelDownload: () -> Unit,
     onDownload: () -> Unit
 ) {
     val context = LocalContext.current
@@ -675,6 +718,14 @@ private fun VideoScreen(
                     Icon(Icons.Default.FullscreenExit, contentDescription = "Exit fullscreen", tint = Color.White)
                 }
             }
+            if (downloadStatus.isNotBlank()) {
+                DownloadStatusPanel(
+                    status = downloadStatus, active = downloadActive, paused = downloadPaused,
+                    bytes = downloadBytes, total = downloadTotal, onTogglePause = onTogglePause,
+                    onCancel = onCancelDownload,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)
+                )
+            }
         }
     } else {
         Column(Modifier.fillMaxSize().padding(14.dp)) {
@@ -712,6 +763,14 @@ private fun VideoScreen(
                 Icon(Icons.Default.Download, null)
                 Spacer(Modifier.width(8.dp))
                 Text("Download lecture")
+            }
+            if (downloadStatus.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                DownloadStatusPanel(
+                    status = downloadStatus, active = downloadActive, paused = downloadPaused,
+                    bytes = downloadBytes, total = downloadTotal, onTogglePause = onTogglePause,
+                    onCancel = onCancelDownload
+                )
             }
         }
     }
