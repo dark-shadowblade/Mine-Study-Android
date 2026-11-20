@@ -58,7 +58,6 @@ import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.ui.PlayerView
-import com.google.android.exoplayer2.ui.PlayerControlView
 import com.google.android.exoplayer2.upstream.DataSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -660,6 +659,8 @@ private fun VideoScreen(
     val player = remember(url) {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(ChunkQueryDataSourceFactory()))
+            .setSeekBackIncrementMs(10_000L)
+            .setSeekForwardIncrementMs(10_000L)
             .build().apply {
                 setMediaItem(MediaItem.fromUri(url))
                 prepare()
@@ -704,10 +705,8 @@ private fun VideoScreen(
         controllerAutoShow = true
         controllerShowTimeoutMs = 4500
         setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-        findViewById<PlayerControlView>(com.google.android.exoplayer2.ui.R.id.exo_controller)?.apply {
-            setRewindIncrementMs(10_000)
-            setFastForwardIncrementMs(10_000)
-        }
+        setShowRewindButton(true)
+        setShowFastForwardButton(true)
         resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
     }
 
