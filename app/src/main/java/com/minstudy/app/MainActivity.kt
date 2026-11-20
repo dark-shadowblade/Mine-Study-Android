@@ -65,21 +65,35 @@ class MainActivity : ComponentActivity() {
 private class StudyApi(private val context: Context) {
     private val prefs = context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
     var apiKey: String
-        get() = prefs.getString("api_key", "") ?: ""
-        set(value) { prefs.edit().putString("api_key", value.trim()).apply() }
+        get() {
+            val key = prefs.getString("api_key", "") ?: ""
+            val expiry = prefs.getLong("api_key_expiry", 0L)
+            if (key.isNotBlank() && (expiry == 0L || System.currentTimeMillis() >= expiry)) {
+                prefs.edit().remove("api_key").remove("api_key_expiry").apply()
+                return ""
+            }
+            return key
+        }
+        set(value) {
+            val clean = value.trim()
+            prefs.edit().putString("api_key", clean)
+                .putLong("api_key_expiry", if (clean.isBlank()) 0L else System.currentTimeMillis() + 24L * 60L * 60L * 1000L)
+                .apply()
+        }
 
     var batchId: String
         get() = prefs.getString("batch_id", BATCH_ONE) ?: BATCH_ONE
         set(value) { prefs.edit().putString("batch_id", value).apply() }
 
-    suspend fun get(path: String): JSONObject = withContext(Dispatchers.IO) {
+    suspend fun get(path: String, keyOverride: String? = null): JSONObject = withContext(Dispatchers.IO) {
         val connection = (URL(API + path).openConnection() as HttpURLConnection)
         try {
             connection.requestMethod = "GET"
             connection.connectTimeout = 15000
             connection.readTimeout = 25000
             connection.setRequestProperty("Accept", "application/json")
-            if (apiKey.isNotBlank()) connection.setRequestProperty("x-api-key", apiKey)
+            val requestKey = keyOverride ?: apiKey
+            if (requestKey.isNotBlank()) connection.setRequestProperty("x-api-key", requestKey)
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val body = stream.bufferedReader().use { it.readText() }
@@ -89,9 +103,19 @@ private class StudyApi(private val context: Context) {
     }
 
     suspend fun generateKeyLink(): String {
-        val result = get("/auth/generate?server=1")
-        return findString(result, setOf("keyUrl", "key_url", "url"))
-            ?: throw IllegalStateException("Key link was not returned by the server")
+        val result = get("/auth/generate?server=1", "")
+        if (!result.optBoolean("success", true)) throw IllegalStateException(result.optString("message", "Key generation failed"))
+        val link = findString(result, setOf("keyUrl", "key_url"))
+            ?: throw IllegalStateException("The server did not return data.keyUrl")
+        if (!link.startsWith("https://", ignoreCase = true)) throw IllegalStateException("The server returned an invalid key link")
+        return link
+    }
+
+    suspend fun verifyKey(candidate: String): Int {
+        if (candidate.isBlank()) throw IllegalStateException("Enter an API key first")
+        val response = get("/batch/$BATCH_ONE/subject", candidate)
+        if (!response.optBoolean("success", true)) throw IllegalStateException(response.optString("message", "API key rejected"))
+        return list(response).size
     }
 
     fun findString(value: Any?, names: Set<String>): String? {
@@ -106,11 +130,13 @@ private class StudyApi(private val context: Context) {
         return null
     }
 
-    fun list(value: Any?): List<StudyItem> {
+    fun list(value: Any?, chapterItems: Boolean = false): List<StudyItem> {
         val array = findArray(value) ?: return emptyList()
         return (0 until array.length()).mapNotNull { i ->
             val obj = array.optJSONObject(i) ?: return@mapNotNull null
-            val id = first(obj, "_id", "id", "chapter_id", "subjectId", "chapterId", "contentId", "videoId") ?: return@mapNotNull null
+            val id = if (chapterItems) first(obj, "chapter_id", "_id", "id", "chapterId")
+                else first(obj, "_id", "videoId", "id", "subjectId", "chapter_id", "chapterId", "contentId")
+            if (id == null) return@mapNotNull null
             val title = first(obj, "subject", "name", "title", "topic", "chapterName", "subjectName", "fileName") ?: "Untitled"
             val sub = first(obj, "description", "duration", "type") ?: ""
             StudyItem(id, title, sub, obj)
@@ -171,7 +197,7 @@ private fun MineStudyApp() {
         selectedSubject = subject; busy = true; error = ""
         scope.launch {
             try {
-                chapters = api.list(api.get("/batch/${api.batchId}/subject/${enc(subject.id)}/chapter"))
+                chapters = api.list(api.get("/batch/${api.batchId}/subject/${enc(subject.id)}/chapter"), chapterItems = true)
                 screen = "chapters"
             } catch (e: Exception) { error = e.message ?: "Could not load chapters" }
             finally { busy = false }
