@@ -334,17 +334,27 @@ private fun MineStudyApp() {
                         ItemList(
                             "Learning material", contents, busy, error,
                             actionLabel = if (type == "videos" || type == "DppVideos") "Play" else "Open PDF",
-                            onDownload = if (type == "videos" || type == "DppVideos") { item ->
+                            onDownload = { item ->
                                 scope.launch {
-                                    busy = true
+                                    downloadStatus = "Preparing " + item.title
                                     try {
-                                        val detail = api.get("/batch/${api.batchId}/subject/${enc(selectedSubject!!.id)}/chapter/${enc(selectedChapter!!.id)}/content/${enc(item.id)}")
-                                        val stream = findStreamUrl(detail) ?: throw IllegalStateException("No downloadable video URL was returned")
-                                        downloadVideo(context, stream, apiKey, item.title)
-                                    } catch (e: Exception) { error = e.message ?: "Download failed" }
-                                    finally { busy = false }
+                                        val video = type == "videos" || type == "DppVideos"
+                                        val sourceUrl = if (video) {
+                                            val detailPath = "/batch/" + api.batchId + "/subject/" + enc(selectedSubject!!.id) + "/chapter/" + enc(selectedChapter!!.id) + "/content/" + enc(item.id)
+                                            findStreamUrl(api.get(detailPath))
+                                        } else api.findString(item.raw, setOf("baseUrl"))
+                                        if (sourceUrl.isNullOrBlank()) throw IllegalStateException("Download URL is missing")
+                                        val category = when (type) { "videos" -> "Lectures"; "notes" -> "Notes"; "DppNotes" -> "DPP"; "DppVideos" -> "DPP Videos"; else -> type }
+                                        downloadStatus = "Downloading " + item.title
+                                        DownloadRepository.download(context, sourceUrl, item.title, category, video) { bytes, total ->
+                                            android.os.Handler(context.mainLooper).post { downloadBytes = bytes; downloadTotal = total }
+                                        }
+                                        downloadRecords = DownloadRepository.list(context)
+                                        downloadStatus = "Download saved: " + item.title
+                                        Toast.makeText(context, "Saved in Downloads/Mine Study/" + category, Toast.LENGTH_LONG).show()
+                                    } catch (e: Exception) { downloadStatus = "Download failed: " + (e.message ?: "Unknown error"); error = downloadStatus }
                                 }
-                            } else null,
+                            },
                             onSelect = { item ->
                             if (type == "videos" || type == "DppVideos") {
                                 busy = true
@@ -363,10 +373,14 @@ private fun MineStudyApp() {
                             }
                         }, onRetry = { selectedChapter?.let { loadContents(it) } })
                     }
-                    "player" -> VideoScreen(currentTitle, currentVideo, onDownload = { /* download action connected below */ })
+                    "player" -> VideoScreen(currentTitle, currentVideo, onDownload = { Toast.makeText(context, "Use the download button beside the lecture in its section", Toast.LENGTH_SHORT).show() })
                     "downloads" -> DownloadGallery(downloadRecords, onOpen = { record -> try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(record.uri), record.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) } catch (_: Exception) { Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show() } }, onRefresh = { downloadRecords = DownloadRepository.list(context) })
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                if (downloadStatus.isNotBlank()) {
+                    Text(downloadStatus, color = Color(0xFF71D6C5), style = MaterialTheme.typography.bodySmall)
+                    if (downloadStatus.startsWith("Downloading")) LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
                 if (error.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     Text(error, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
