@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Pause
