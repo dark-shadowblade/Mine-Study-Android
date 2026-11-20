@@ -1,6 +1,8 @@
 package com.minstudy.app
 
 import android.content.Context
+import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.content.Intent
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -37,11 +39,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import coil.compose.AsyncImage
 import androidx.lifecycle.lifecycleScope
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
@@ -49,6 +56,7 @@ import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.ui.PlayerView
 import com.google.android.exoplayer2.upstream.DataSpec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -212,6 +220,7 @@ private fun MineStudyApp() {
     var selectedChapter by remember { mutableStateOf<StudyItem?>(null) }
     var currentVideo by remember { mutableStateOf("") }
     var currentTitle by remember { mutableStateOf("") }
+    var currentItemIndex by remember { mutableIntStateOf(-1) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var keyLink by remember { mutableStateOf("") }
@@ -221,6 +230,9 @@ private fun MineStudyApp() {
     var downloadStatus by remember { mutableStateOf("") }
     var downloadBytes by remember { mutableStateOf(0L) }
     var downloadTotal by remember { mutableStateOf(-1L) }
+    var downloadActive by remember { mutableStateOf(false) }
+    var downloadPaused by remember { mutableStateOf(false) }
+    var downloadControl by remember { mutableStateOf<DownloadControl?>(null) }
 
     fun loadSubjects() {
         busy = true; error = ""
@@ -254,6 +266,73 @@ private fun MineStudyApp() {
         }
     }
 
+    fun startDownload(
+        title: String,
+        category: String,
+        isVideo: Boolean,
+        resolveUrl: suspend () -> String?
+    ) {
+        if (downloadActive) {
+            Toast.makeText(context, "A download is already running", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val control = DownloadControl()
+        downloadControl = control
+        downloadActive = true
+        downloadPaused = false
+        downloadBytes = 0L
+        downloadTotal = -1L
+        downloadStatus = "Preparing $title"
+        scope.launch {
+            try {
+                val sourceUrl = resolveUrl()
+                if (sourceUrl.isNullOrBlank()) throw IllegalStateException("Download URL is missing")
+                downloadStatus = "Downloading $title"
+                val record = DownloadRepository.download(context, sourceUrl, title, category, isVideo, control) { bytes, total ->
+                    android.os.Handler(context.mainLooper).post {
+                        downloadBytes = bytes
+                        downloadTotal = total
+                    }
+                }
+                downloadRecords = DownloadRepository.list(context)
+                downloadStatus = "Download saved: " + record.name
+                Toast.makeText(context, "Saved in Downloads/Mine Study/" + category, Toast.LENGTH_LONG).show()
+            } catch (e: CancellationException) {
+                downloadStatus = "Download cancelled: $title"
+            } catch (e: Exception) {
+                downloadStatus = "Download failed: " + (e.message ?: "Unknown error")
+                error = downloadStatus
+            } finally {
+                downloadActive = false
+                downloadPaused = false
+                downloadControl = null
+            }
+        }
+    }
+
+    fun playLecture(index: Int) {
+        val item = contents.getOrNull(index) ?: return
+        busy = true
+        error = ""
+        scope.launch {
+            try {
+                val detailPath = "/batch/" + api.batchId + "/subject/" + enc(selectedSubject!!.id) +
+                    "/chapter/" + enc(selectedChapter!!.id) + "/content/" + enc(item.id)
+                val detail = api.get(detailPath)
+                val stream = findStreamUrl(detail)
+                if (stream.isNullOrBlank()) throw IllegalStateException("No playable video URL was returned.")
+                currentVideo = stream
+                currentTitle = item.title
+                currentItemIndex = index
+                screen = "player"
+            } catch (e: Exception) {
+                error = e.message ?: "Unable to open lesson"
+            } finally {
+                busy = false
+            }
+        }
+    }
+
     fun goBack() {
         screen = when (screen) {
             "player" -> "contents"
@@ -271,23 +350,30 @@ private fun MineStudyApp() {
     )) {
         Scaffold(
             topBar = {
-                TopAppBar(
-                    title = { Column {
-                        Text("MINE STUDY", fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-                        Text("Your learning space", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } },
-                    navigationIcon = {
-                        if (screen != "home") IconButton(onClick = {
-                            goBack()
-                        }) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
-                    },
-                    actions = { IconButton(onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }) { Icon(Icons.Default.FolderOpen, contentDescription = "Downloads") }; IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, contentDescription = "Settings") } },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0B0D14))
-                )
+                if (screen != "player") {
+                    TopAppBar(
+                        title = { Column {
+                            Text("MINE STUDY", fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+                            Text("Your learning space", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } },
+                        navigationIcon = {
+                            if (screen != "home") IconButton(onClick = { goBack() }) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                            }
+                        },
+                        actions = {
+                            IconButton(onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }) {
+                                Icon(Icons.Default.FolderOpen, contentDescription = "Downloads")
+                            }
+                            IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0B0D14))
+                    )
+                }
             },
             containerColor = Color(0xFF0B0D14)
         ) { padding ->
-            Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
+            Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = if (screen == "player") 0.dp else 18.dp)) {
                 when (screen) {
                     "home" -> {
                         Spacer(Modifier.height(18.dp))
@@ -333,66 +419,75 @@ private fun MineStudyApp() {
                         }
                         ItemList(
                             "Learning material", contents, busy, error,
+                            showThumbnails = true,
                             actionLabel = if (type == "videos" || type == "DppVideos") "Play" else "Open PDF",
                             onDownload = { item ->
-                                scope.launch {
-                                    downloadStatus = "Preparing " + item.title
-                                    try {
-                                        val video = type == "videos" || type == "DppVideos"
-                                        val sourceUrl = if (video) {
-                                            val detailPath = "/batch/" + api.batchId + "/subject/" + enc(selectedSubject!!.id) + "/chapter/" + enc(selectedChapter!!.id) + "/content/" + enc(item.id)
-                                            findStreamUrl(api.get(detailPath))
-                                        } else api.findString(item.raw, setOf("baseUrl"))
-                                        if (sourceUrl.isNullOrBlank()) throw IllegalStateException("Download URL is missing")
-                                        val category = when (type) { "videos" -> "Lectures"; "notes" -> "Notes"; "DppNotes" -> "DPP"; "DppVideos" -> "DPP Videos"; else -> type }
-                                        downloadStatus = "Downloading " + item.title
-                                        DownloadRepository.download(context, sourceUrl, item.title, category, video) { bytes, total ->
-                                            android.os.Handler(context.mainLooper).post { downloadBytes = bytes; downloadTotal = total }
-                                        }
-                                        downloadRecords = DownloadRepository.list(context)
-                                        downloadStatus = "Download saved: " + item.title
-                                        Toast.makeText(context, "Saved in Downloads/Mine Study/" + category, Toast.LENGTH_LONG).show()
-                                    } catch (e: Exception) { downloadStatus = "Download failed: " + (e.message ?: "Unknown error"); error = downloadStatus }
+                                val video = type == "videos" || type == "DppVideos"
+                                val category = when (type) {
+                                    "videos" -> "Lectures"
+                                    "notes" -> "Notes"
+                                    "DppNotes" -> "DPP"
+                                    "DppVideos" -> "DPP Videos"
+                                    else -> type
+                                }
+                                startDownload(item.title, category, video) {
+                                    if (video) {
+                                        val detailPath = "/batch/" + api.batchId + "/subject/" + enc(selectedSubject!!.id) +
+                                            "/chapter/" + enc(selectedChapter!!.id) + "/content/" + enc(item.id)
+                                        findStreamUrl(api.get(detailPath))
+                                    } else api.findString(item.raw, setOf("baseUrl"))
                                 }
                             },
                             onSelect = { item ->
-                            if (type == "videos" || type == "DppVideos") {
-                                busy = true
-                                scope.launch {
-                                    try {
-                                        val detail = api.get("/batch/${api.batchId}/subject/${enc(selectedSubject!!.id)}/chapter/${enc(selectedChapter!!.id)}/content/${enc(item.id)}")
-                                        currentVideo = findStreamUrl(detail) ?: ""
-                                        if (currentVideo.isBlank()) error = "No playable video URL was returned."
-                                        else { currentTitle = item.title; screen = "player" }
-                                    } catch (e: Exception) { error = e.message ?: "Unable to open lesson" }
-                                    finally { busy = false }
+                                if (type == "videos" || type == "DppVideos") {
+                                    playLecture(contents.indexOfFirst { it.id == item.id })
+                                } else {
+                                    val url = api.findString(item.raw, setOf("baseUrl", "base_url", "url", "fileUrl", "file_url", "downloadUrl"))
+                                    if (url != null) openExternal(context, url) else error = "No document link found for this item."
                                 }
-                            } else {
-                                val url = api.findString(item.raw, setOf("baseUrl", "base_url", "url", "fileUrl", "file_url", "downloadUrl"))
-                                if (url != null) openExternal(context, url) else error = "No document link found for this item."
-                            }
-                        }, onRetry = { selectedChapter?.let { loadContents(it) } })
+                            }, onRetry = { selectedChapter?.let { loadContents(it) } })
                     }
-                    "player" -> VideoScreen(currentTitle, currentVideo, onDownload = {
-                        scope.launch {
-                            try {
-                                val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
-                                downloadStatus = "Downloading " + currentTitle
-                                DownloadRepository.download(context, currentVideo, currentTitle, category, true) { bytes, total ->
-                                    android.os.Handler(context.mainLooper).post { downloadBytes = bytes; downloadTotal = total }
-                                }
-                                downloadRecords = DownloadRepository.list(context)
-                                downloadStatus = "Download saved: " + currentTitle
-                                Toast.makeText(context, "Saved in Downloads/Mine Study/" + category, Toast.LENGTH_LONG).show()
-                            } catch (e: Exception) { downloadStatus = "Download failed: " + (e.message ?: "Unknown error"); error = downloadStatus }
+                    "player" -> VideoScreen(
+                        currentTitle,
+                        currentVideo,
+                        hasPrevious = currentItemIndex > 0,
+                        hasNext = currentItemIndex in 0 until contents.lastIndex,
+                        onPrevious = { playLecture(currentItemIndex - 1) },
+                        onNext = { playLecture(currentItemIndex + 1) },
+                        onBack = { screen = "contents" },
+                        onDownload = {
+                            val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
+                            startDownload(currentTitle, category, true) { currentVideo }
                         }
-                    })
+                    )
                     "downloads" -> DownloadGallery(downloadRecords, onOpen = { record -> try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(record.uri), record.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) } catch (_: Exception) { Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show() } }, onRefresh = { downloadRecords = DownloadRepository.list(context) })
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
                 if (downloadStatus.isNotBlank()) {
-                    Text(downloadStatus, color = Color(0xFF71D6C5), style = MaterialTheme.typography.bodySmall)
-                    if (downloadStatus.startsWith("Downloading")) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(downloadStatus, modifier = Modifier.weight(1f), color = if (downloadStatus.startsWith("Download failed")) Color(0xFFFF8A8A) else Color(0xFF71D6C5), style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                        if (downloadActive) {
+                            TextButton(onClick = {
+                                val next = !downloadPaused
+                                downloadPaused = next
+                                downloadControl?.paused = next
+                            }) { Text(if (downloadPaused) "Resume" else "Pause") }
+                            TextButton(onClick = { downloadControl?.cancelled = true }) {
+                                Text("Cancel", color = Color(0xFFFF8A8A))
+                            }
+                        }
+                    }
+                    if (downloadActive) {
+                        if (downloadTotal > 0L) {
+                            val fraction = (downloadBytes.toFloat() / downloadTotal.toFloat()).coerceIn(0f, 1f)
+                            LinearProgressIndicator(progress = fraction, modifier = Modifier.fillMaxWidth())
+                            Text("${formatBytes(downloadBytes)} / ${formatBytes(downloadTotal)}  •  ${(fraction * 100).toInt()}%", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                        } else {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text(formatBytes(downloadBytes) + " downloaded", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
                 if (error.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
@@ -452,6 +547,7 @@ private fun MineStudyApp() {
 private fun ItemList(
     heading: String, items: List<StudyItem>, busy: Boolean, error: String,
     actionLabel: String = "Open",
+    showThumbnails: Boolean = false,
     onDownload: ((StudyItem) -> Unit)? = null,
     onSelect: (StudyItem) -> Unit, onRetry: () -> Unit
 ) {
@@ -469,8 +565,18 @@ private fun ItemList(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A))
             ) {
                 Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(44.dp).background(Color(0xFF292641), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF))
+                    val thumbnail = item.raw.optString("image").takeIf { showThumbnails && it.startsWith("https://", true) }
+                    if (thumbnail != null) {
+                        AsyncImage(
+                            model = thumbnail,
+                            contentDescription = item.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(width = 112.dp, height = 72.dp).clip(RoundedCornerShape(12.dp))
+                        )
+                    } else {
+                        Box(Modifier.size(width = if (showThumbnails) 112.dp else 44.dp, height = if (showThumbnails) 72.dp else 44.dp).background(Color(0xFF292641), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF))
+                        }
                     }
                     Spacer(Modifier.width(13.dp))
                     Column(Modifier.weight(1f)) {
@@ -490,45 +596,132 @@ private fun ItemList(
 }
 
 @Composable
-private fun VideoScreen(title: String, url: String, onDownload: () -> Unit) {
+private fun VideoScreen(
+    title: String,
+    url: String,
+    hasPrevious: Boolean,
+    hasNext: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onBack: () -> Unit,
+    onDownload: () -> Unit
+) {
     val context = LocalContext.current
+    val activity = context as? Activity
+    var fullScreen by remember(url) { mutableStateOf(false) }
     val player = remember(url) {
-        ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(ChunkQueryDataSourceFactory())).build().apply {
-            setMediaItem(MediaItem.fromUri(url)); prepare(); playWhenReady = true
-        }
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(ChunkQueryDataSourceFactory()))
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(url))
+                prepare()
+                playWhenReady = true
+            }
     }
     var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
     var playerError by remember(player) { mutableStateOf("") }
+
     DisposableEffect(player) {
         val listener = object : com.google.android.exoplayer2.Player.Listener {
             override fun onPlaybackStateChanged(state: Int) { playbackState = state }
-            override fun onPlayerError(error: com.google.android.exoplayer2.PlaybackException) { playerError = error.message ?: "Playback failed" }
-        }
-        player.addListener(listener)
-        onDispose { player.removeListener(listener); player.release() }
-    }
-    Column(Modifier.fillMaxSize()) {
-        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(12.dp))
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply {
-            this.player = player
-            useController = true
-            controllerAutoShow = true
-            controllerShowTimeoutMs = 5000
-            setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-            resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-        } }, update = { it.player = player }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-        if (playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
-                Text("Buffering video…", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+            override fun onPlayerError(error: com.google.android.exoplayer2.PlaybackException) {
+                playerError = error.message ?: "Playback failed"
             }
         }
-        if (playerError.isNotBlank()) Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(onClick = onDownload, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text("Download lecture") }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
     }
+
+    DisposableEffect(fullScreen) {
+        val window = activity?.window
+        if (fullScreen) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            if (window != null) WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            if (window != null) WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            if (window != null) WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    fun makePlayerView(ctx: Context) = PlayerView(ctx).apply {
+        this.player = player
+        useController = true
+        controllerAutoShow = true
+        controllerShowTimeoutMs = 4500
+        setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+        rewindIncrementMs = 10_000
+        fastForwardIncrementMs = 10_000
+        resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+    }
+
+    if (fullScreen) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            AndroidView(factory = { makePlayerView(it) }, update = { it.player = player }, modifier = Modifier.fillMaxSize())
+            Row(
+                Modifier.align(Alignment.TopEnd).padding(10.dp)
+                    .background(Color(0x99000000), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, color = Color.White, maxLines = 1, modifier = Modifier.widthIn(max = 180.dp))
+                IconButton(onClick = { fullScreen = false }) {
+                    Icon(Icons.Default.FullscreenExit, contentDescription = "Exit fullscreen", tint = Color.White)
+                }
+            }
+        }
+    } else {
+        Column(Modifier.fillMaxSize().padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
+                Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2)
+                IconButton(onClick = { fullScreen = true }) {
+                    Icon(Icons.Default.Fullscreen, contentDescription = "Fullscreen")
+                }
+            }
+            AndroidView(factory = { makePlayerView(it) }, update = { it.player = player }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+            if (playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING) {
+                Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Buffering video…", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (playerError.isNotBlank()) Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onPrevious, enabled = hasPrevious, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.SkipPrevious, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Previous")
+                }
+                OutlinedButton(onClick = onNext, enabled = hasNext, modifier = Modifier.weight(1f)) {
+                    Text("Next")
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Default.SkipNext, contentDescription = null)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Download, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Download lecture")
+            }
+        }
+    }
+}
+
+private fun formatBytes(value: Long): String {
+    if (value < 1024L) return "$value B"
+    val kb = value / 1024.0
+    if (kb < 1024.0) return String.format(java.util.Locale.US, "%.1f KB", kb)
+    return String.format(java.util.Locale.US, "%.2f MB", kb / 1024.0)
 }
 
 private fun findStreamUrl(value: Any?): String? {
