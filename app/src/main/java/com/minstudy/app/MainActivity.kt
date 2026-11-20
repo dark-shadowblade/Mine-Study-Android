@@ -583,29 +583,41 @@ private fun ItemList(
                 shape = RoundedCornerShape(17.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A))
             ) {
-                Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val thumbnail = item.raw.optString("image").takeIf { showThumbnails && it.startsWith("https://", true) }
-                    if (thumbnail != null) {
-                        AsyncImage(
-                            model = thumbnail,
-                            contentDescription = item.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(width = 112.dp, height = 72.dp).clip(RoundedCornerShape(12.dp))
-                        )
-                    } else {
-                        Box(Modifier.size(width = if (showThumbnails) 112.dp else 44.dp, height = if (showThumbnails) 72.dp else 44.dp).background(Color(0xFF292641), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF))
+                Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        val thumbnail = item.raw.optString("image").takeIf { showThumbnails && it.startsWith("http", true) }
+                        if (thumbnail != null) {
+                            AsyncImage(
+                                model = thumbnail,
+                                contentDescription = item.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.size(width = 136.dp, height = 88.dp).clip(RoundedCornerShape(13.dp))
+                            )
+                        } else {
+                            Box(
+                                Modifier.size(width = if (showThumbnails) 136.dp else 48.dp, height = if (showThumbnails) 88.dp else 48.dp)
+                                    .background(Color(0xFF292641), RoundedCornerShape(13.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(28.dp))
+                            }
+                        }
+                        Spacer(Modifier.width(13.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(item.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge, maxLines = 3)
+                            if (item.subtitle.isNotBlank()) Text(item.subtitle, color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                         }
                     }
-                    Spacer(Modifier.width(13.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(item.title, fontWeight = FontWeight.SemiBold)
-                        if (item.subtitle.isNotBlank()) Text(item.subtitle, color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                    }
-                    TextButton(onClick = { onSelect(item) }) { Text(actionLabel) }
-                    if (onDownload != null) {
-                        IconButton(onClick = { onDownload(item) }) {
-                            Icon(Icons.Default.Download, contentDescription = "Download", tint = Color(0xFF71D6C5))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        OutlinedButton(onClick = { onSelect(item) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)) {
+                            Text(actionLabel, maxLines = 1)
+                        }
+                        if (onDownload != null) {
+                            Button(onClick = { onDownload(item) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)) {
+                                Icon(Icons.Default.Download, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Download")
+                            }
                         }
                     }
                 }
