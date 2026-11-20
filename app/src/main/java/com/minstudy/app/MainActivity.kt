@@ -252,7 +252,7 @@ private fun MineStudyApp() {
             finally { busy = false }
         }
     }
-    LaunchedEffect(apiKey, batch) {
+    LaunchedEffect(Unit) {
         if (apiKey.isNotBlank()) {
             api.batchId = batch
             loadSubjects()
@@ -445,14 +445,14 @@ private fun MineStudyApp() {
                                         val detailPath = "/batch/" + api.batchId + "/subject/" + enc(selectedSubject!!.id) +
                                             "/chapter/" + enc(selectedChapter!!.id) + "/content/" + enc(item.id)
                                         findStreamUrl(api.get(detailPath))
-                                    } else api.findString(item.raw, setOf("baseUrl"))
+                                    } else item.raw.optString("baseUrl").takeIf { it.startsWith("http", true) }
                                 }
                             },
                             onSelect = { item ->
                                 if (type == "videos" || type == "DppVideos") {
                                     playLecture(contents.indexOfFirst { it.id == item.id })
                                 } else {
-                                    val url = api.findString(item.raw, setOf("baseUrl", "base_url", "url", "fileUrl", "file_url", "downloadUrl"))
+                                    val url = item.raw.optString("baseUrl").takeIf { it.startsWith("http", true) }
                                     if (url != null) openExternal(context, url) else error = "No document link found for this item."
                                 }
                             }, onRetry = { selectedChapter?.let { loadContents(it) } })
@@ -547,7 +547,8 @@ private fun MineStudyApp() {
                             try {
                                 val count = api.verifyKey(apiKey)
                                 api.apiKey = apiKey
-                                keyStatus = "Verified successfully. $count subjects found. Expires in 24 hours."
+                                keyStatus = "Verified successfully. " + count + " subjects found. Expires in 24 hours."
+                                loadSubjects()
                             } catch (e: Exception) { keyStatus = e.message ?: "API key verification failed" }
                         }
                     }, modifier = Modifier.fillMaxWidth()) { Text("Verify API key") }
@@ -560,7 +561,13 @@ private fun MineStudyApp() {
                     if (keyLink.isNotBlank()) Text(keyLink, style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5A9FF))
                 }
             },
-            confirmButton = { TextButton(onClick = { api.apiKey = apiKey; api.batchId = batch; showSettings = false }) { Text("Save") } },
+            confirmButton = { TextButton(onClick = {
+                api.apiKey = apiKey
+                api.batchId = batch
+                showSettings = false
+                if (apiKey.isNotBlank()) loadSubjects()
+                else { screen = "home"; error = "Add and verify your API key in Settings." }
+            }) { Text("Save") } },
             dismissButton = { TextButton(onClick = { showSettings = false }) { Text("Cancel") } }
         )
     }
