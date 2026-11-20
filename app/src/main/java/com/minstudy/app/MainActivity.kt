@@ -305,7 +305,7 @@ private fun MineStudyApp() {
                                 scope.launch {
                                     busy = true
                                     try {
-                                        val detail = api.get("/batch/\${api.batchId}/subject/\${enc(selectedSubject!!.id)}/chapter/\${enc(selectedChapter!!.id)}/content/\${enc(item.id)}")
+                                        val detail = api.get("/batch/${api.batchId}/subject/${enc(selectedSubject!!.id)}/chapter/${enc(selectedChapter!!.id)}/content/${enc(item.id)}")
                                         val stream = findStreamUrl(detail) ?: throw IllegalStateException("No downloadable video URL was returned")
                                         downloadVideo(context, stream, apiKey, item.title)
                                     } catch (e: Exception) { error = e.message ?: "Download failed" }
