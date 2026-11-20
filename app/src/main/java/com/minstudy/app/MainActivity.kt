@@ -3,6 +3,8 @@ package com.minstudy.app
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -181,6 +183,7 @@ private fun MineStudyApp() {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var keyLink by remember { mutableStateOf("") }
+    var keyStatus by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
 
     fun loadSubjects() {
@@ -332,13 +335,28 @@ private fun MineStudyApp() {
                     Text("The key is stored locally on this device. It is not included in the app source.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     OutlinedButton(onClick = {
                         scope.launch {
+                            keyStatus = "Generating key link..."
                             try {
                                 keyLink = api.generateKeyLink()
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Mine Study key link", keyLink))
+                                keyStatus = "Key link copied. Open the page and obtain your API key."
                                 openExternal(context, keyLink)
-                            } catch (e: Exception) { error = e.message ?: "Could not generate key link" }
+                            } catch (e: Exception) { keyStatus = e.message ?: "Could not generate key link" }
                         }
-                    }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Key, null); Spacer(Modifier.width(8.dp)); Text("Generate / open key link") }
-                    if (keyLink.isNotBlank()) Text("If the key page displays your key, copy it and paste it above.", style = MaterialTheme.typography.bodySmall)
+                    }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Key, null); Spacer(Modifier.width(8.dp)); Text("Generate key link") }
+                    OutlinedButton(onClick = {
+                        scope.launch {
+                            keyStatus = "Verifying API key..."
+                            try {
+                                val count = api.verifyKey(apiKey)
+                                api.apiKey = apiKey
+                                keyStatus = "Verified successfully. $count subjects found. Expires in 24 hours."
+                            } catch (e: Exception) { keyStatus = e.message ?: "API key verification failed" }
+                        }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Verify API key") }
+                    if (keyStatus.isNotBlank()) Text(keyStatus, style = MaterialTheme.typography.bodySmall, color = if (keyStatus.contains("Verified successfully")) Color(0xFF71D6C5) else Color.Gray)
+                    if (keyLink.isNotBlank()) Text(keyLink, style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5A9FF))
                 }
             },
             confirmButton = { TextButton(onClick = { api.apiKey = apiKey; api.batchId = batch; showSettings = false }) { Text("Save") } },
