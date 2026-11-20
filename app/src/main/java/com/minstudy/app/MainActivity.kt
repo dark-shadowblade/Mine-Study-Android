@@ -655,7 +655,8 @@ private fun VideoScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
-    var fullScreen by remember(url) { mutableStateOf(false) }
+    var fullScreen by remember { mutableStateOf(false) }
+    var playbackSpeed by remember { mutableFloatStateOf(1f) }
     val player = remember(url) {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(ChunkQueryDataSourceFactory()))
@@ -671,8 +672,12 @@ private fun VideoScreen(
     var playerError by remember(player) { mutableStateOf("") }
 
     DisposableEffect(player) {
+        player.setPlaybackSpeed(playbackSpeed)
         val listener = object : com.google.android.exoplayer2.Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) { playbackState = state }
+            override fun onPlaybackStateChanged(state: Int) {
+                playbackState = state
+                if (state == com.google.android.exoplayer2.Player.STATE_ENDED && hasNext) onNext()
+            }
             override fun onPlayerError(error: com.google.android.exoplayer2.PlaybackException) {
                 playerError = error.message ?: "Playback failed"
             }
@@ -699,6 +704,17 @@ private fun VideoScreen(
         }
     }
 
+    fun cyclePlaybackSpeed() {
+        playbackSpeed = when (playbackSpeed) {
+            1f -> 1.25f
+            1.25f -> 1.5f
+            1.5f -> 1.75f
+            1.75f -> 2f
+            else -> 1f
+        }
+        player.setPlaybackSpeed(playbackSpeed)
+    }
+
     fun makePlayerView(ctx: Context) = PlayerView(ctx).apply {
         this.player = player
         useController = true
@@ -720,6 +736,9 @@ private fun VideoScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(title, color = Color.White, maxLines = 1, modifier = Modifier.widthIn(max = 180.dp))
+                TextButton(onClick = { cyclePlaybackSpeed() }) {
+                    Text("${playbackSpeed}×", color = Color.White)
+                }
                 IconButton(onClick = { fullScreen = false }) {
                     Icon(Icons.Default.FullscreenExit, contentDescription = "Exit fullscreen", tint = Color.White)
                 }
@@ -738,6 +757,7 @@ private fun VideoScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
                 Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2)
+                TextButton(onClick = { cyclePlaybackSpeed() }) { Text("${playbackSpeed}×") }
                 IconButton(onClick = { fullScreen = true }) {
                     Icon(Icons.Default.Fullscreen, contentDescription = "Fullscreen")
                 }
