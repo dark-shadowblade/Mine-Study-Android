@@ -701,6 +701,7 @@ private fun VideoScreen(
     var buffering by remember { mutableStateOf(true) }
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
+    var isScrubbing by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf("") }
 
     val player = remember(url) {
@@ -735,7 +736,7 @@ private fun VideoScreen(
 
     LaunchedEffect(player) {
         while (true) {
-            positionMs = player.currentPosition.coerceAtLeast(0L)
+            if (!isScrubbing) positionMs = player.currentPosition.coerceAtLeast(0L)
             durationMs = player.duration.takeIf { it > 0L && it != com.google.android.exoplayer2.C.TIME_UNSET } ?: 0L
             isPlaying = player.isPlaying
             buffering = player.playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING
@@ -830,8 +831,8 @@ private fun VideoScreen(
             }
             Slider(
                 value = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs).toFloat() else 0f,
-                onValueChange = { positionMs = it.toLong() },
-                onValueChangeFinished = { player.seekTo(positionMs) },
+                onValueChange = { isScrubbing = true; positionMs = it.toLong() },
+                onValueChangeFinished = { player.seekTo(positionMs); isScrubbing = false },
                 valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
                 enabled = durationMs > 0L
             )
