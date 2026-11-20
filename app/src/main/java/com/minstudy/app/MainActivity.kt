@@ -39,7 +39,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
-import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
@@ -402,12 +401,9 @@ private fun ItemList(
 @Composable
 private fun VideoScreen(title: String, url: String, apiKey: String, onDownload: () -> Unit) {
     val context = LocalContext.current
-    val player = remember(url, apiKey) {
-        val httpFactory = DefaultHttpDataSource.Factory().setDefaultRequestProperties(
-            if (apiKey.isNotBlank()) mapOf("x-api-key" to apiKey) else emptyMap()
-        )
+    val player = remember(url) {
         ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(ChunkQueryDataSourceFactory()))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(url))
                 prepare()
