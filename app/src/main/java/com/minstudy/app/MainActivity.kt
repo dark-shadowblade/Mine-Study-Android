@@ -148,10 +148,9 @@ private class StudyApi(private val context: Context) {
         val array = when (value) {
             is JSONArray -> value
             is JSONObject -> value.optJSONArray("data")
-                ?: value.optJSONArray(if (chapterItems) "chapters" else "subjects")
-                ?: findArray(value)
-            else -> null
-        } ?: return emptyList()
+                ?: throw IllegalStateException("Unexpected API response: expected data array")
+            else -> throw IllegalStateException("Unexpected API response: expected data array")
+        }
 
         return (0 until array.length()).mapNotNull { i ->
             val obj = array.optJSONObject(i) ?: return@mapNotNull null
