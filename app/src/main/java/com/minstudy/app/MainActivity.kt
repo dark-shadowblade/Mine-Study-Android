@@ -682,7 +682,11 @@ private fun VideoScreen(
     val context = LocalContext.current
     val activity = context as? Activity
     var fullScreen by remember { mutableStateOf(false) }
+    var showControls by remember { mutableStateOf(true) }
+    var controlsLocked by remember { mutableStateOf(false) }
     var speedMenu by remember { mutableStateOf(false) }
+    var speedDialog by remember { mutableStateOf(false) }
+    var speedText by remember { mutableStateOf("1.25") }
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(true) }
@@ -690,13 +694,9 @@ private fun VideoScreen(
     var durationMs by remember { mutableLongStateOf(0L) }
     var isScrubbing by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf("") }
-    var showControls by remember { mutableStateOf(true) }
-    var controlsLocked by remember { mutableStateOf(false) }
-    var customSpeedDialog by remember { mutableStateOf(false) }
-    var customSpeedText by remember { mutableStateOf("1.25") }
-    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
-    var volume by remember { mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)) }
+    val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    var volume by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
 
     val player = remember(url) {
         ExoPlayer.Builder(context)
@@ -719,6 +719,7 @@ private fun VideoScreen(
             }
             override fun onPlayerError(error: com.google.android.exoplayer2.PlaybackException) {
                 playerError = error.message ?: "Playback failed"
+                showControls = true
             }
         }
         player.addListener(listener)
@@ -734,7 +735,7 @@ private fun VideoScreen(
             durationMs = player.duration.takeIf { it > 0L && it != com.google.android.exoplayer2.C.TIME_UNSET } ?: 0L
             isPlaying = player.isPlaying
             buffering = player.playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING
-            delay(400)
+            delay(350)
         }
     }
 
@@ -753,151 +754,186 @@ private fun VideoScreen(
         }
     }
 
-    fun chooseSpeed(speed: Float) {
+    LaunchedEffect(showControls, speedMenu, speedDialog, isScrubbing, fullScreen) {
+        if (showControls && !speedMenu && !speedDialog && !isScrubbing && !controlsLocked) {
+            delay(4500)
+            showControls = false
+        }
+    }
+
+    fun setSpeed(speed: Float) {
         playbackSpeed = speed.coerceIn(0.25f, 4f)
         player.setPlaybackSpeed(playbackSpeed)
         speedMenu = false
     }
 
-    LaunchedEffect(showControls, speedMenu, customSpeedDialog, isScrubbing, fullScreen) {
-        if (showControls && !speedMenu && !customSpeedDialog && !isScrubbing) {
-            delay(5000)
-            showControls = false
+    @Composable
+    fun SpeedPicker() {
+        Box {
+            TextButton(onClick = { speedMenu = true }, contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp)) {
+                Text("${playbackSpeed}×", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+            DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
+                listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 3.5f, 4f).forEach { speed ->
+                    DropdownMenuItem(text = { Text("${speed}×") }, onClick = { setSpeed(speed) })
+                }
+                DropdownMenuItem(text = { Text("Custom…") }, onClick = {
+                    speedText = playbackSpeed.toString()
+                    speedMenu = false
+                    speedDialog = true
+                })
+            }
         }
     }
 
     @Composable
-    fun Controls(modifier: Modifier = Modifier, light: Boolean = false) {
-        val fg = if (light) Color.White else Color(0xFFF4F5FA)
-        Column(
-            modifier.fillMaxWidth()
-                .background(if (light) Color(0xCC080A10) else Color(0xFF171D2A), RoundedCornerShape(if (light) 0.dp else 20.dp))
-                .padding(horizontal = 15.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, modifier = Modifier.weight(1f), color = fg, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                Box {
-                    FilledTonalButton(onClick = { speedMenu = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
-                        Text(playbackSpeed.toString() + "×", fontWeight = FontWeight.Bold)
-                    }
-                    DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
-                        listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 3.5f, 4f).forEach { speed ->
-                            DropdownMenuItem(
-                                text = { Text(speed.toString() + "×", fontWeight = if (playbackSpeed == speed) FontWeight.Bold else FontWeight.Normal) },
-                                onClick = { chooseSpeed(speed) }
-                            )
-                        }
-                        DropdownMenuItem(text = { Text("Custom speed…") }, onClick = {
-                            customSpeedText = playbackSpeed.toString()
-                            speedMenu = false
-                            customSpeedDialog = true
-                        })
-                    }
-                }
-                IconButton(onClick = {
-                    controlsLocked = true
-                    showControls = false
-                }) {
-                    Icon(Icons.Default.Lock, "Lock player controls", tint = fg)
-                }
-                if (light) {
-                    IconButton(onClick = { fullScreen = false }) {
-                        Icon(Icons.Default.FullscreenExit, "Exit fullscreen", tint = fg)
-                    }
-                }
-            }
-            if (customSpeedDialog) {
-                AlertDialog(
-                    onDismissRequest = { customSpeedDialog = false },
-                    title = { Text("Custom playback speed") },
-                    text = {
-                        OutlinedTextField(
-                            value = customSpeedText,
-                            onValueChange = { customSpeedText = it.filter { ch -> ch.isDigit() || ch == '.' }.take(5) },
-                            singleLine = true,
-                            label = { Text("Speed (0.25× to 4×)") }
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            val parsed = customSpeedText.toFloatOrNull()
-                            if (parsed != null && parsed in 0.25f..4f) {
-                                chooseSpeed(parsed)
-                                customSpeedDialog = false
-                            }
-                        }) { Text("Apply") }
-                    },
-                    dismissButton = { TextButton(onClick = { customSpeedDialog = false }) { Text("Cancel") } }
-                )
-            }
-            if (buffering) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color(0xFF9B8CFF))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Loading video…", color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onPrevious, enabled = hasPrevious) {
-                    Icon(Icons.Default.SkipPrevious, "Previous lecture", tint = if (hasPrevious) fg else Color.Gray, modifier = Modifier.size(29.dp))
-                }
-                IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }) {
-                    Icon(Icons.Default.Replay10, "Back 10 seconds", tint = fg, modifier = Modifier.size(34.dp))
-                }
-                FilledIconButton(
-                    onClick = {
-                        if (player.isPlaying) player.pause()
-                        else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) {
-                            player.seekTo(0L)
-                            player.play()
-                        } else player.play()
-                    },
-                    modifier = Modifier.size(56.dp),
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFF9B8CFF), contentColor = Color(0xFF10121A))
-                ) {
-                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", modifier = Modifier.size(31.dp))
-                }
-                IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)) }) {
-                    Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = fg, modifier = Modifier.size(34.dp))
-                }
-                IconButton(onClick = onNext, enabled = hasNext) {
-                    Icon(Icons.Default.SkipNext, "Next lecture", tint = if (hasNext) fg else Color.Gray, modifier = Modifier.size(29.dp))
-                }
-            }
+    fun SeekBar(compact: Boolean = false) {
+        Column(verticalArrangement = Arrangement.spacedBy(if (compact) 0.dp else 2.dp)) {
             Slider(
                 value = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs).toFloat() else 0f,
                 onValueChange = { isScrubbing = true; positionMs = it.toLong() },
                 onValueChangeFinished = { player.seekTo(positionMs); isScrubbing = false },
                 valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
-                enabled = durationMs > 0L
+                enabled = durationMs > 0L,
+                modifier = Modifier.fillMaxWidth().height(if (compact) 24.dp else 30.dp)
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatTime(positionMs), color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
-                Text(formatTime(durationMs), color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.VolumeUp, contentDescription = "Volume", tint = fg)
-                Slider(
-                    value = volume.toFloat(),
-                    onValueChange = {
-                        volume = it.toInt().coerceIn(0, maxVolume)
-                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
-                    },
-                    valueRange = 0f..maxVolume.toFloat(),
-                    modifier = Modifier.weight(1f)
-                )
-                Text("${(volume * 100 / maxVolume)}%", color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                Text(formatTime(positionMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                Text(formatTime(durationMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
 
+    @Composable
+    fun PlayerOverlay(landscape: Boolean) {
+        val iconSize = if (landscape) 34.dp else 27.dp
+        Column(
+            Modifier.fillMaxSize()
+                .background(Color(0x66000000))
+                .padding(horizontal = if (landscape) 24.dp else 10.dp, vertical = if (landscape) 14.dp else 7.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { if (landscape) fullScreen = false else onBack() }, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+                }
+                Text(title, color = Color.White, maxLines = 1, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                if (landscape) {
+                    TextButton(onClick = onDownload, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                        Icon(Icons.Default.Download, null, tint = Color.White, modifier = Modifier.size(19.dp))
+                    }
+                }
+                SpeedPicker()
+                IconButton(onClick = {
+                    controlsLocked = true
+                    showControls = false
+                }, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Default.Lock, "Lock controls", tint = Color.White)
+                }
+                if (landscape) {
+                    IconButton(onClick = { fullScreen = false }, modifier = Modifier.size(38.dp)) {
+                        Icon(Icons.Default.FullscreenExit, "Exit fullscreen", tint = Color.White)
+                    }
+                }
+            }
+
+            if (landscape) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.size(52.dp)) {
+                        Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(iconSize))
+                    }
+                    Spacer(Modifier.width(22.dp))
+                    FilledIconButton(
+                        onClick = {
+                            if (player.isPlaying) player.pause()
+                            else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
+                            else player.play()
+                        },
+                        modifier = Modifier.size(62.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
+                    ) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(36.dp))
+                    }
+                    Spacer(Modifier.width(22.dp))
+                    IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)) }, modifier = Modifier.size(52.dp)) {
+                        Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(iconSize))
+                    }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(iconSize))
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    FilledIconButton(
+                        onClick = {
+                            if (player.isPlaying) player.pause()
+                            else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
+                            else player.play()
+                        },
+                        modifier = Modifier.size(48.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
+                    ) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(28.dp))
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)) }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(iconSize))
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (buffering) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Color.White)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Buffering…", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                SeekBar(compact = true)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.VolumeUp, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Slider(
+                        value = volume.toFloat(),
+                        onValueChange = {
+                            volume = it.toInt().coerceIn(0, maxVolume)
+                            audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                        },
+                        valueRange = 0f..maxVolume.toFloat(),
+                        modifier = Modifier.weight(1f).height(24.dp)
+                    )
+                    Text("${volume * 100 / maxVolume}%", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+
+    if (speedDialog) {
+        AlertDialog(
+            onDismissRequest = { speedDialog = false },
+            title = { Text("Custom playback speed") },
+            text = {
+                OutlinedTextField(
+                    value = speedText,
+                    onValueChange = { speedText = it.filter { ch -> ch.isDigit() || ch == '.' }.take(5) },
+                    singleLine = true,
+                    label = { Text("0.25× to 4×") }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    speedText.toFloatOrNull()?.takeIf { it in 0.25f..4f }?.let { setSpeed(it); speedDialog = false }
+                }) { Text("Apply") }
+            },
+            dismissButton = { TextButton(onClick = { speedDialog = false }) { Text("Cancel") } }
+        )
+    }
+
     if (fullScreen) {
         Box(Modifier.fillMaxSize().background(Color.Black).clickable {
-            if (controlsLocked) {
-                controlsLocked = false
-                showControls = true
-            } else showControls = !showControls
+            if (controlsLocked) { controlsLocked = false; showControls = true }
+            else showControls = !showControls
         }) {
             AndroidView(
                 factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER); keepScreenOn = true } },
@@ -905,28 +941,28 @@ private fun VideoScreen(
                 modifier = Modifier.fillMaxSize()
             )
             if (controlsLocked) {
-                Row(Modifier.align(Alignment.Center).background(Color(0xAA080A10), RoundedCornerShape(24.dp)).padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Lock, null, tint = Color.White)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Tap to unlock", color = Color.White)
+                Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
+                    .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 9.dp))
+            } else if (showControls) PlayerOverlay(landscape = true)
+            if (playerError.isNotBlank()) {
+                TextButton(onClick = { playerError = ""; player.prepare(); player.play() }, modifier = Modifier.align(Alignment.TopEnd)) {
+                    Text("Retry", color = Color.White)
                 }
-            } else if (showControls) Controls(Modifier.align(Alignment.BottomCenter), light = true)
+            }
         }
     } else {
-        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back to lessons") }
-                Text("NOW PLAYING", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.3.sp, modifier = Modifier.weight(1f))
-                IconButton(onClick = { fullScreen = true }) { Icon(Icons.Default.Fullscreen, "Fullscreen") }
+                IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.ArrowBack, "Back to lessons") }
+                Text("NOW PLAYING", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.2.sp, modifier = Modifier.weight(1f))
+                SpeedPicker()
+                IconButton(onClick = { fullScreen = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.Fullscreen, "Fullscreen") }
             }
             Box(
-                Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(18.dp))
+                Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)).background(Color.Black)
                     .clickable {
-                        if (controlsLocked) {
-                            controlsLocked = false
-                            showControls = true
-                        } else showControls = !showControls
+                        if (controlsLocked) { controlsLocked = false; showControls = true }
+                        else showControls = !showControls
                     }
             ) {
                 AndroidView(
@@ -935,24 +971,28 @@ private fun VideoScreen(
                     modifier = Modifier.fillMaxSize()
                 )
                 if (controlsLocked) {
-                    Row(Modifier.align(Alignment.Center).background(Color(0xAA080A10), RoundedCornerShape(24.dp)).padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Lock, null, tint = Color.White)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Tap video to unlock", color = Color.White)
+                    Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
+                        .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 8.dp))
+                } else if (showControls) PlayerOverlay(landscape = false)
+                if (playerError.isNotBlank()) {
+                    TextButton(onClick = { playerError = ""; player.prepare(); player.play() }, modifier = Modifier.align(Alignment.TopEnd)) {
+                        Text("Retry", color = Color.White)
                     }
                 }
             }
-            if (playerError.isNotBlank()) {
-                Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { playerError = ""; player.prepare(); player.play() }) { Text("Retry playback") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, modifier = Modifier.weight(1f), maxLines = 2, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                FilledTonalButton(onClick = onDownload, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                    Icon(Icons.Default.Download, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Download")
+                }
             }
-            if (showControls) Controls()
-            Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Download, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Download lecture")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = onPrevious, enabled = hasPrevious) { Icon(Icons.Default.SkipPrevious, null); Text("Previous") }
+                TextButton(onClick = onNext, enabled = hasNext) { Text("Next"); Icon(Icons.Default.SkipNext, null) }
             }
+            if (playerError.isNotBlank()) Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
         }
     }
 }
