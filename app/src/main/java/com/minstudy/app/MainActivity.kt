@@ -67,6 +67,7 @@ import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.ui.PlayerView
 import com.google.android.exoplayer2.upstream.DataSpec
+import com.google.android.exoplayer2.upstream.DefaultDataSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -344,6 +345,22 @@ private fun MineStudyApp() {
 
     fun playLecture(index: Int) {
         val item = contents.getOrNull(index) ?: return
+        val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
+        val cleanTitle = item.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+        val localCopy = DownloadRepository.list(context).firstOrNull { record ->
+            record.category == category && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)
+                && record.mime.startsWith("video/")
+        }
+        // Prefer the completed local file. Only resolve the online stream when no
+        // valid downloaded copy exists, so playback continues without internet.
+        if (localCopy != null) {
+            currentVideo = localCopy.uri
+            currentTitle = item.title
+            currentItemIndex = index
+            downloadRecords = DownloadRepository.list(context)
+            screen = "player"
+            return
+        }
         busy = true
         error = ""
         scope.launch {
@@ -482,8 +499,23 @@ private fun MineStudyApp() {
                                 if (type == "videos" || type == "DppVideos") {
                                     playLecture(contents.indexOfFirst { it.id == item.id })
                                 } else {
-                                    val url = item.raw.optString("baseUrl").takeIf { it.startsWith("http", true) }
-                                    if (url != null) openExternal(context, url) else error = "No document link found for this item."
+                                    val category = when (type) {
+                                        "notes" -> "Notes"
+                                        "DppNotes" -> "DPP"
+                                        else -> type
+                                    }
+                                    val cleanTitle = item.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                                    val localCopy = downloadRecords.firstOrNull { record ->
+                                        record.category == category && record.name.substringBeforeLast('.')
+                                            .equals(cleanTitle, ignoreCase = true) && record.mime == "application/pdf"
+                                    }
+                                    if (localCopy != null) {
+                                        // Open the saved PDF URI; no API/CDN request is made.
+                                        openLocalDocument(context, Uri.parse(localCopy.uri))
+                                    } else {
+                                        val url = item.raw.optString("baseUrl").takeIf { it.startsWith("http", true) }
+                                        if (url != null) openExternal(context, url) else error = "No document link found for this item."
+                                    }
                                 }
                             }, onRetry = { selectedChapter?.let { loadContents(it) } })
                     }
@@ -740,8 +772,14 @@ private fun VideoScreen(
     var volume by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
 
     val player = remember(url) {
+        val mediaUri = Uri.parse(url)
+        val sourceFactory = if (mediaUri.scheme == "content" || mediaUri.scheme == "file") {
+            DefaultDataSource.Factory(context)
+        } else {
+            ChunkQueryDataSourceFactory()
+        }
         ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(ChunkQueryDataSourceFactory()))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(sourceFactory))
             .setSeekBackIncrementMs(10_000L)
             .setSeekForwardIncrementMs(10_000L)
             .build().apply {
@@ -1073,6 +1111,18 @@ private fun findStreamUrl(value: Any?): String? {
 }
 
 private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
+private fun openLocalDocument(context: Context, uri: Uri) {
+    try {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/pdf")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    } catch (_: Exception) {
+        Toast.makeText(context, "No PDF viewer is installed", Toast.LENGTH_SHORT).show()
+    }
+}
+
 private fun openExternal(context: Context, value: String) {
     try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(value)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) { }
 }
