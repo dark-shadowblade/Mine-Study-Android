@@ -157,13 +157,15 @@ class DownloadService : Service() {
         val openIntent = packageManager.getLaunchIntentForPackage(packageName)
         val content = openIntent?.let { PendingIntent.getActivity(this, 1, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
         val builder = NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle(if (completed) if (failed) "Download failed" else "Download complete" else "Mine Study download")
+            .setSmallIcon(if (completed) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_sys_download)
+            .setContentTitle(if (completed) if (failed) "Download failed" else "Download complete" else currentTitle)
+            .setSubText("Mine Study")
             .setContentText(s.status)
             .setContentIntent(content)
             .setOnlyAlertOnce(true)
             .setOngoing(!completed)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
         if (!completed && s.total > 0L) {
             val percent = ((s.bytes * 100L) / s.total).toInt().coerceIn(0, 100)
             builder.setProgress(100, percent, false)
