@@ -113,21 +113,25 @@ object DownloadRepository {
             val output = resolver.openOutputStream(uri, "w") ?: throw IllegalStateException("Could not open download file")
             output.use { out ->
                 if (isVideo) {
-                    val data = ChunkQueryDataSource()
+                    val temp = java.io.File(context.cacheDir, "mine-study-${System.currentTimeMillis()}.part")
                     try {
-                        data.open(DataSpec(Uri.parse(sourceUrl)))
-                        val total = data.discoveredLength
-                        onProgress(0L, total)
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            if (data.isAtChunkBoundary) control.checkpoint()
-                            val count = data.read(buffer, 0, buffer.size)
-                            if (count == C.RESULT_END_OF_INPUT) break
-                            out.write(buffer, 0, count)
-                            written += count
-                            onProgress(written, total)
+                        ParallelCdnDownloader.download(sourceUrl, temp, control) { received, total ->
+                            written = received
+                            onProgress(received, total)
                         }
-                    } finally { data.close() }
+                        temp.inputStream().use { input ->
+                            val buffer = ByteArray(256 * 1024)
+                            while (true) {
+                                control.checkpoint()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                out.write(buffer, 0, count)
+                            }
+                        }
+                        onProgress(written, written)
+                    } finally {
+                        temp.delete()
+                    }
                 } else {
                     val connection = (URL(sourceUrl).openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
