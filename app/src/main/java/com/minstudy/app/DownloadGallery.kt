@@ -179,6 +179,7 @@ fun DownloadGallery(
     paused: Boolean,
     bytes: Long,
     total: Long,
+    speed: Long = 0L,
     onTogglePause: () -> Unit,
     onCancel: () -> Unit,
     onOpen: (DownloadRecord) -> Unit,
@@ -222,14 +223,14 @@ fun DownloadGallery(
                             val progress = (bytes.toFloat() / total.toFloat()).coerceIn(0f, 1f)
                             androidx.compose.material3.LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
                             androidx.compose.material3.Text(
-                                "${bytes / (1024 * 1024)} MB / ${total / (1024 * 1024)} MB  •  ${(progress * 100).toInt()}%",
+                                "${bytes / (1024 * 1024)} MB / ${total / (1024 * 1024)} MB  •  ${(progress * 100).toInt()}%  •  ${speed / (1024 * 1024)} MB/s",
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         } else {
                             androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             androidx.compose.material3.Text(
-                                "${bytes / (1024 * 1024)} MB downloaded",
+                                "${bytes / (1024 * 1024)} MB downloaded  •  ${speed / (1024 * 1024)} MB/s",
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
                             )
