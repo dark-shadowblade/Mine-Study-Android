@@ -425,22 +425,6 @@ private fun MineStudyApp() {
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = if (screen == "player") 0.dp else 18.dp)) {
                 when (screen) {
                     "home" -> {
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Your subjects", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text(
-                                    if (subjects.isEmpty()) "Your study library" else "${subjects.size} subjects",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
-                            IconButton(onClick = { loadSubjects() }, enabled = !busy) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Refresh subjects")
-                            }
-                        }
                         if (apiKey.isBlank()) {
                             Card(
                                 Modifier.fillMaxWidth(),
@@ -462,7 +446,7 @@ private fun MineStudyApp() {
                                 " ", subjects, busy, error,
                                 actionLabel = "Open",
                                 onSelect = { loadChapters(it) },
-                                onRetry = { loadSubjects() }
+                                onRetry = {}
                             )
                         }
                     }
