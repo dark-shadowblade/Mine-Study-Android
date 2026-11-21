@@ -84,6 +84,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { MineStudyApp() }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4107)
+        }
     }
 }
 
@@ -235,19 +238,19 @@ private fun MineStudyApp() {
     var keyStatus by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
     var downloadRecords by remember { mutableStateOf(DownloadRepository.list(context)) }
-    var downloadStatus by remember { mutableStateOf("") }
-    var downloadBytes by remember { mutableStateOf(0L) }
-    var downloadTotal by remember { mutableStateOf(-1L) }
-    var downloadActive by remember { mutableStateOf(false) }
-    var downloadPaused by remember { mutableStateOf(false) }
-    var downloadControl by remember { mutableStateOf<DownloadControl?>(null) }
+    val downloadState by DownloadService.state.collectAsState()
+    LaunchedEffect(downloadState.status) {
+        if (downloadState.status.startsWith("Download complete")) {
+            downloadRecords = DownloadRepository.list(context)
+        }
+    }
 
     fun loadSubjects() {
         busy = true; error = ""
         scope.launch {
             try {
                 subjects = api.list(api.get("/batch/${api.batchId}/subject"), "subjects")
-                screen = "subjects"
+                if (screen != "home") screen = "subjects"
             } catch (e: Exception) { error = e.message ?: "Could not load batches" }
             finally { busy = false }
         }
@@ -255,7 +258,14 @@ private fun MineStudyApp() {
     LaunchedEffect(Unit) {
         if (apiKey.isNotBlank()) {
             api.batchId = batch
-            loadSubjects()
+            try {
+                subjects = api.list(api.get("/batch/${api.batchId}/subject"), "subjects")
+                screen = "home"
+                error = ""
+            } catch (e: Exception) {
+                screen = "home"
+                error = e.message ?: "Could not load your study library"
+            }
         } else {
             screen = "home"
             error = "Add and verify your API key in Settings to load subjects."
@@ -263,6 +273,10 @@ private fun MineStudyApp() {
     }
 
     fun loadChapters(subject: StudyItem) {
+        if (selectedSubject?.id == subject.id && chapters.isNotEmpty()) {
+            screen = "chapters"
+            return
+        }
         selectedSubject = subject; busy = true; error = ""
         scope.launch {
             try {
@@ -273,6 +287,10 @@ private fun MineStudyApp() {
         }
     }
     fun loadContents(chapter: StudyItem, contentType: String = type) {
+        if (selectedChapter?.id == chapter.id && type == contentType && contents.isNotEmpty()) {
+            screen = "contents"
+            return
+        }
         selectedChapter = chapter; type = contentType; busy = true; error = ""
         scope.launch {
             try {
@@ -290,40 +308,17 @@ private fun MineStudyApp() {
         isVideo: Boolean,
         resolveUrl: suspend () -> String?
     ) {
-        if (downloadActive) {
+        if (downloadState.active) {
             Toast.makeText(context, "A download is already running", Toast.LENGTH_SHORT).show()
             return
         }
-        val control = DownloadControl()
-        downloadControl = control
-        downloadActive = true
-        downloadPaused = false
-        downloadBytes = 0L
-        downloadTotal = -1L
-        downloadStatus = "Preparing $title"
         scope.launch {
             try {
                 val sourceUrl = resolveUrl()
                 if (sourceUrl.isNullOrBlank()) throw IllegalStateException("Download URL is missing")
-                downloadStatus = "Downloading $title"
-                val record = DownloadRepository.download(context, sourceUrl, title, category, isVideo, control) { bytes, total ->
-                    android.os.Handler(context.mainLooper).post {
-                        downloadBytes = bytes
-                        downloadTotal = total
-                    }
-                }
-                downloadRecords = DownloadRepository.list(context)
-                downloadStatus = "Download saved: " + record.name
-                Toast.makeText(context, "Saved in Downloads/Mine Study/" + category, Toast.LENGTH_LONG).show()
-            } catch (e: CancellationException) {
-                downloadStatus = "Download cancelled: $title"
+                DownloadService.start(context, sourceUrl, title, category, isVideo)
             } catch (e: Exception) {
-                downloadStatus = "Download failed: " + (e.message ?: "Unknown error")
-                error = downloadStatus
-            } finally {
-                downloadActive = false
-                downloadPaused = false
-                downloadControl = null
+                error = "Could not start download: ${e.message ?: "Unknown error"}"
             }
         }
     }
@@ -394,25 +389,35 @@ private fun MineStudyApp() {
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = if (screen == "player") 0.dp else 18.dp)) {
                 when (screen) {
                     "home" -> {
-                        Spacer(Modifier.height(26.dp))
-                        Text("WELCOME TO MINE STUDY", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.5.sp)
-                        Spacer(Modifier.height(10.dp))
-                        Text("Your classes,\nall in one place.", fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(18.dp))
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(20.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A))
-                        ) {
-                            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("Connect your study library", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                                Text("Add your API key to load subjects automatically.", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                                Button(onClick = { showSettings = true }, modifier = Modifier.fillMaxWidth()) {
-                                    Icon(Icons.Default.Key, null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Open settings")
+                        Spacer(Modifier.height(30.dp))
+                        Text("YOUR STUDY SPACE", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.6.sp)
+                        Spacer(Modifier.height(12.dp))
+                        Text("Ready when\nyou are.", fontSize = 34.sp, lineHeight = 40.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Pick up where you left off or browse your learning library.", color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(24.dp))
+                        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A))) {
+                            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text("Study library", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                Text(if (subjects.isEmpty()) "Connect your API key to load your subjects." else "${subjects.size} subjects ready to explore", color = Color.LightGray)
+                                Button(onClick = {
+                                    if (subjects.isEmpty()) loadSubjects() else screen = "subjects"
+                                }, modifier = Modifier.fillMaxWidth(), enabled = !busy) {
+                                    Text(if (subjects.isEmpty()) "Load study library" else "Browse subjects")
                                 }
                             }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        OutlinedButton(onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Default.FolderOpen, null); Spacer(Modifier.width(8.dp)); Text("My downloads")
+                        }
+                        if (downloadState.active) {
+                            Spacer(Modifier.height(10.dp))
+                            Text(downloadState.status, color = Color(0xFF71D6C5), style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (apiKey.isBlank()) {
+                            Spacer(Modifier.height(10.dp))
+                            TextButton(onClick = { showSettings = true }) { Icon(Icons.Default.Key, null); Text("Set up API key") }
                         }
                     }
                     "subjects" -> ItemList("Subjects", subjects, busy, error, onSelect = { loadChapters(it) }, onRetry = { loadSubjects() })
@@ -465,17 +470,6 @@ private fun MineStudyApp() {
                         onPrevious = { playLecture(currentItemIndex - 1) },
                         onNext = { playLecture(currentItemIndex + 1) },
                         onBack = { screen = "contents" },
-                        downloadStatus = downloadStatus,
-                        downloadActive = downloadActive,
-                        downloadPaused = downloadPaused,
-                        downloadBytes = downloadBytes,
-                        downloadTotal = downloadTotal,
-                        onTogglePause = {
-                            val next = !downloadPaused
-                            downloadPaused = next
-                            downloadControl?.paused = next
-                        },
-                        onCancelDownload = { downloadControl?.cancelled = true },
                         onDownload = {
                             val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
                             startDownload(currentTitle, category, true) { currentVideo }
@@ -483,17 +477,13 @@ private fun MineStudyApp() {
                     )
                     "downloads" -> DownloadGallery(
                         records = downloadRecords,
-                        status = downloadStatus,
-                        active = downloadActive,
-                        paused = downloadPaused,
-                        bytes = downloadBytes,
-                        total = downloadTotal,
-                        onTogglePause = {
-                            val next = !downloadPaused
-                            downloadPaused = next
-                            downloadControl?.paused = next
-                        },
-                        onCancel = { downloadControl?.cancelled = true },
+                        status = downloadState.status,
+                        active = downloadState.active,
+                        paused = downloadState.paused,
+                        bytes = downloadState.bytes,
+                        total = downloadState.total,
+                        onTogglePause = { if (downloadState.paused) DownloadService.resume(context) else DownloadService.pause(context) },
+                        onCancel = { DownloadService.cancel(context) },
                         onOpen = { record ->
                             try {
                                 context.startActivity(Intent(Intent.ACTION_VIEW)
@@ -683,13 +673,6 @@ private fun VideoScreen(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
-    downloadStatus: String,
-    downloadActive: Boolean,
-    downloadPaused: Boolean,
-    downloadBytes: Long,
-    downloadTotal: Long,
-    onTogglePause: () -> Unit,
-    onCancelDownload: () -> Unit,
     onDownload: () -> Unit
 ) {
     val context = LocalContext.current
@@ -851,14 +834,6 @@ private fun VideoScreen(
                 modifier = Modifier.fillMaxSize()
             )
             Controls(Modifier.align(Alignment.BottomCenter), light = true)
-            if (downloadStatus.isNotBlank()) {
-                DownloadStatusPanel(
-                    status = downloadStatus, active = downloadActive, paused = downloadPaused,
-                    bytes = downloadBytes, total = downloadTotal, onTogglePause = onTogglePause,
-                    onCancel = onCancelDownload,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(10.dp)
-                )
-            }
         }
     } else {
         Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -881,13 +856,6 @@ private fun VideoScreen(
                 Icon(Icons.Default.Download, null)
                 Spacer(Modifier.width(8.dp))
                 Text("Download lecture")
-            }
-            if (downloadStatus.isNotBlank()) {
-                DownloadStatusPanel(
-                    status = downloadStatus, active = downloadActive, paused = downloadPaused,
-                    bytes = downloadBytes, total = downloadTotal, onTogglePause = onTogglePause,
-                    onCancel = onCancelDownload
-                )
             }
         }
     }
