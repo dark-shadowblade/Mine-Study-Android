@@ -260,6 +260,7 @@ private fun MineStudyApp() {
     LaunchedEffect(Unit) {
         if (apiKey.isNotBlank()) {
             api.batchId = batch
+            busy = true
             try {
                 subjects = api.list(api.get("/batch/${api.batchId}/subject"), "subjects")
                 screen = "home"
@@ -267,6 +268,8 @@ private fun MineStudyApp() {
             } catch (e: Exception) {
                 screen = "home"
                 error = e.message ?: "Could not load your study library"
+            } finally {
+                busy = false
             }
         } else {
             screen = "home"
@@ -753,8 +756,8 @@ private fun VideoScreen(
         speedMenu = false
     }
 
-    LaunchedEffect(showControls, fullScreen) {
-        if (showControls) {
+    LaunchedEffect(showControls, speedMenu, customSpeedDialog, isScrubbing, fullScreen) {
+        if (showControls && !speedMenu && !customSpeedDialog && !isScrubbing) {
             delay(5000)
             showControls = false
         }
