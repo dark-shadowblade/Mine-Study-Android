@@ -2,6 +2,7 @@ package com.minstudy.app
 
 import android.content.Context
 import android.app.Activity
+import android.media.AudioManager
 import android.content.pm.ActivityInfo
 import android.content.Intent
 import android.content.ClipData
@@ -686,6 +687,12 @@ private fun VideoScreen(
     var durationMs by remember { mutableLongStateOf(0L) }
     var isScrubbing by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf("") }
+    var showControls by remember { mutableStateOf(true) }
+    var customSpeedDialog by remember { mutableStateOf(false) }
+    var customSpeedText by remember { mutableStateOf("1.25") }
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    var volume by remember { mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)) }
 
     val player = remember(url) {
         ExoPlayer.Builder(context)
@@ -743,9 +750,16 @@ private fun VideoScreen(
     }
 
     fun chooseSpeed(speed: Float) {
-        playbackSpeed = speed
-        player.setPlaybackSpeed(speed)
+        playbackSpeed = speed.coerceIn(0.25f, 4f)
+        player.setPlaybackSpeed(playbackSpeed)
         speedMenu = false
+    }
+
+    LaunchedEffect(showControls, fullScreen) {
+        if (showControls) {
+            delay(5000)
+            showControls = false
+        }
     }
 
     @Composable
@@ -770,6 +784,11 @@ private fun VideoScreen(
                                 onClick = { chooseSpeed(speed) }
                             )
                         }
+                        DropdownMenuItem(text = { Text("Custom speed…") }, onClick = {
+                            customSpeedText = playbackSpeed.toString()
+                            speedMenu = false
+                            customSpeedDialog = true
+                        })
                     }
                 }
                 if (light) {
@@ -777,6 +796,30 @@ private fun VideoScreen(
                         Icon(Icons.Default.FullscreenExit, "Exit fullscreen", tint = fg)
                     }
                 }
+            }
+            if (customSpeedDialog) {
+                AlertDialog(
+                    onDismissRequest = { customSpeedDialog = false },
+                    title = { Text("Custom playback speed") },
+                    text = {
+                        OutlinedTextField(
+                            value = customSpeedText,
+                            onValueChange = { customSpeedText = it.filter { ch -> ch.isDigit() || ch == '.' }.take(5) },
+                            singleLine = true,
+                            label = { Text("Speed (0.25× to 4×)") }
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val parsed = customSpeedText.toFloatOrNull()
+                            if (parsed != null && parsed in 0.25f..4f) {
+                                chooseSpeed(parsed)
+                                customSpeedDialog = false
+                            }
+                        }) { Text("Apply") }
+                    },
+                    dismissButton = { TextButton(onClick = { customSpeedDialog = false }) { Text("Cancel") } }
+                )
             }
             if (buffering) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -823,17 +866,30 @@ private fun VideoScreen(
                 Text(formatTime(positionMs), color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
                 Text(formatTime(durationMs), color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.VolumeUp, contentDescription = "Volume", tint = fg)
+                Slider(
+                    value = volume.toFloat(),
+                    onValueChange = {
+                        volume = it.toInt().coerceIn(0, maxVolume)
+                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                    },
+                    valueRange = 0f..maxVolume.toFloat(),
+                    modifier = Modifier.weight(1f)
+                )
+                Text("${(volume * 100 / maxVolume)}%", color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
 
     if (fullScreen) {
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Box(Modifier.fillMaxSize().background(Color.Black).clickable { showControls = !showControls }) {
             AndroidView(
                 factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER); keepScreenOn = true } },
                 update = { it.player = player },
                 modifier = Modifier.fillMaxSize()
             )
-            Controls(Modifier.align(Alignment.BottomCenter), light = true)
+            if (showControls) Controls(Modifier.align(Alignment.BottomCenter), light = true)
         }
     } else {
         Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -842,16 +898,21 @@ private fun VideoScreen(
                 Text("NOW PLAYING", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.3.sp, modifier = Modifier.weight(1f))
                 IconButton(onClick = { fullScreen = true }) { Icon(Icons.Default.Fullscreen, "Fullscreen") }
             }
-            AndroidView(
-                factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER); keepScreenOn = true } },
-                update = { it.player = player },
-                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(18.dp))
-            )
+            Box(
+                Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(18.dp))
+                    .clickable { showControls = !showControls }
+            ) {
+                AndroidView(
+                    factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER); keepScreenOn = true } },
+                    update = { it.player = player },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
             if (playerError.isNotBlank()) {
                 Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { playerError = ""; player.prepare(); player.play() }) { Text("Retry playback") }
             }
-            Controls()
+            if (showControls) Controls()
             Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Download, null)
                 Spacer(Modifier.width(8.dp))
