@@ -117,7 +117,7 @@ object ParallelCdnDownloader {
                 }
                 builder.appendQueryParameter("s", start.toString())
                 builder.appendQueryParameter("e", end.toString())
-                connection = (URL(builder.build().toString()).openConnection() as HttpURLConnection).apply {
+                val conn = (URL(builder.build().toString()).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 20000
                     readTimeout = 45000
@@ -125,13 +125,14 @@ object ParallelCdnDownloader {
                     setRequestProperty("Accept-Encoding", "identity")
                     setRequestProperty("User-Agent", "ExoPlayer")
                 }
-                val status = connection.responseCode
+                connection = conn
+                val status = conn.responseCode
                 if (status != HttpURLConnection.HTTP_PARTIAL) {
-                    val detail = runCatching { connection.errorStream?.bufferedReader()?.use { it.readText().take(200) } }.getOrNull()
+                    val detail = runCatching { conn.errorStream?.bufferedReader()?.use { it.readText().take(200) } }.getOrNull()
                     throw IOException("CDN HTTP $status: ${detail ?: "unexpected response"}")
                 }
                 val match = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+)", RegexOption.IGNORE_CASE)
-                    .find(connection.getHeaderField("Content-Range") ?: "")
+                    .find(conn.getHeaderField("Content-Range") ?: "")
                     ?: throw IOException("CDN returned invalid Content-Range")
                 val actualStart = match.groupValues[1].toLong()
                 val actualEnd = match.groupValues[2].toLong()
@@ -140,7 +141,7 @@ object ParallelCdnDownloader {
                     throw IOException("CDN returned an unexpected byte range")
                 }
                 val output = ByteArrayOutputStream((actualEnd - start + 1L).toInt())
-                connection.inputStream.use { input ->
+                conn.inputStream.use { input ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {
                         val count = input.read(buffer)
