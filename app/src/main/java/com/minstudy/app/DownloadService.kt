@@ -81,8 +81,9 @@ class DownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START -> begin(intent)
+        val command = intent ?: return START_NOT_STICKY
+        when (command.action) {
+            ACTION_START -> begin(command)
             ACTION_PAUSE -> {
                 control?.paused = true
                 mutableState.value = mutableState.value.copy(paused = true, status = "Paused • $currentTitle")
