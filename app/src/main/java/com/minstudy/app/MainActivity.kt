@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -411,10 +412,6 @@ private fun MineStudyApp() {
                         Spacer(Modifier.height(14.dp))
                         OutlinedButton(onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }, modifier = Modifier.fillMaxWidth()) {
                             Icon(Icons.Default.FolderOpen, null); Spacer(Modifier.width(8.dp)); Text("My downloads")
-                        }
-                        if (downloadState.active) {
-                            Spacer(Modifier.height(10.dp))
-                            Text(downloadState.status, color = Color(0xFF71D6C5), style = MaterialTheme.typography.bodySmall)
                         }
                         if (apiKey.isBlank()) {
                             Spacer(Modifier.height(10.dp))
