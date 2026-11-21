@@ -263,7 +263,7 @@ private fun MineStudyApp() {
         scope.launch {
             try {
                 subjects = api.list(api.get("/batch/${api.batchId}/subject"), "subjects")
-                if (screen != "home") screen = "subjects"
+                screen = "home"
             } catch (e: Exception) { error = e.message ?: "Could not load batches" }
             finally { busy = false }
         }
@@ -386,7 +386,7 @@ private fun MineStudyApp() {
         screen = when (screen) {
             "player" -> "contents"
             "contents" -> "chapters"
-            "chapters" -> "subjects"
+            "chapters" -> "home"
             else -> "home"
         }
     }
@@ -425,31 +425,45 @@ private fun MineStudyApp() {
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = if (screen == "player") 0.dp else 18.dp)) {
                 when (screen) {
                     "home" -> {
-                        Spacer(Modifier.height(30.dp))
-                        Text("YOUR STUDY SPACE", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.6.sp)
-                        Spacer(Modifier.height(12.dp))
-                        Text("Ready when\nyou are.", fontSize = 34.sp, lineHeight = 40.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
-                        Text("Pick up where you left off or browse your learning library.", color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.height(24.dp))
-                        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A))) {
-                            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Text("Study library", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text(if (subjects.isEmpty()) "Connect your API key to load your subjects." else "${subjects.size} subjects ready to explore", color = Color.LightGray)
-                                Button(onClick = {
-                                    if (subjects.isEmpty()) loadSubjects() else screen = "subjects"
-                                }, modifier = Modifier.fillMaxWidth(), enabled = !busy) {
-                                    Text(if (subjects.isEmpty()) "Load study library" else "Browse subjects")
-                                }
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Your subjects", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (subjects.isEmpty()) "Your study library" else "${subjects.size} subjects",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                            IconButton(onClick = { loadSubjects() }, enabled = !busy) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Refresh subjects")
                             }
                         }
-                        Spacer(Modifier.height(14.dp))
-                        OutlinedButton(onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Default.FolderOpen, null); Spacer(Modifier.width(8.dp)); Text("My downloads")
-                        }
                         if (apiKey.isBlank()) {
-                            Spacer(Modifier.height(10.dp))
-                            TextButton(onClick = { showSettings = true }) { Icon(Icons.Default.Key, null); Text("Set up API key") }
+                            Card(
+                                Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)),
+                                shape = RoundedCornerShape(16.dp)
+                            ) {
+                                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Key, null, tint = Color(0xFFB5A9FF))
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Connect your library", fontWeight = FontWeight.SemiBold)
+                                        Text("Add an API key to load your subjects.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    TextButton(onClick = { showSettings = true }) { Text("Set up") }
+                                }
+                            }
+                        } else {
+                            ItemList(
+                                " ", subjects, busy, error,
+                                actionLabel = "Open",
+                                onSelect = { loadChapters(it) },
+                                onRetry = { loadSubjects() }
+                            )
                         }
                     }
                     "subjects" -> ItemList("Subjects", subjects, busy, error, onSelect = { loadChapters(it) }, onRetry = { loadSubjects() })
@@ -568,47 +582,90 @@ private fun MineStudyApp() {
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
-            title = { Text("App settings") },
+            title = {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Settings", fontWeight = FontWeight.Bold)
+                    Text("Library connection", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                }
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Batch server", fontWeight = FontWeight.SemiBold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = batch == BATCH_ONE, onClick = { batch = BATCH_ONE }, label = { Text("Server 1") })
-                        FilterChip(selected = batch == BATCH_TWO, onClick = { batch = BATCH_TWO }, label = { Text("Server 2") })
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = 430.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("SERVER", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        SegmentedButton(
+                            selected = batch == BATCH_ONE,
+                            onClick = { batch = BATCH_ONE },
+                            shape = SegmentedButtonDefaults.itemShape(0, 2)
+                        ) { Text("Server 1") }
+                        SegmentedButton(
+                            selected = batch == BATCH_TWO,
+                            onClick = { batch = BATCH_TWO },
+                            shape = SegmentedButtonDefaults.itemShape(1, 2)
+                        ) { Text("Server 2") }
                     }
-                    Text("API key", fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Paste your API key") })
-                    Text("The key is stored locally on this device. It is not included in the app source.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    OutlinedButton(onClick = {
-                        scope.launch {
-                            keyStatus = "Generating key link..."
-                            try {
-                                keyLink = api.generateKeyLink()
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Mine Study key link", keyLink))
-                                keyStatus = "Key link copied. Open the page and obtain your API key."
-                                openExternal(context, keyLink)
-                            } catch (e: Exception) { keyStatus = e.message ?: "Could not generate key link" }
-                        }
-                    }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Key, null); Spacer(Modifier.width(8.dp)); Text("Generate key link") }
-                    OutlinedButton(onClick = {
-                        scope.launch {
-                            keyStatus = "Verifying API key..."
-                            try {
-                                val count = api.verifyKey(apiKey)
-                                api.apiKey = apiKey
-                                keyStatus = "Verified successfully. " + count + " subjects found. Expires in 24 hours."
-                                loadSubjects()
-                            } catch (e: Exception) { keyStatus = e.message ?: "API key verification failed" }
-                        }
-                    }, modifier = Modifier.fillMaxWidth()) { Text("Verify API key") }
-                    if (keyStatus.isNotBlank()) Text(keyStatus, style = MaterialTheme.typography.bodySmall, color = if (keyStatus.contains("Verified successfully")) Color(0xFF71D6C5) else Color.Gray)
-                    TextButton(onClick = {
-                        api.apiKey = ""
-                        apiKey = ""
-                        keyStatus = "Saved API key cleared."
-                    }) { Text("Clear saved key", color = Color(0xFFFF8A8A)) }
-                    if (keyLink.isNotBlank()) Text(keyLink, style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5A9FF))
+                    HorizontalDivider(color = Color(0xFF303747))
+                    Text("API KEY", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        placeholder = { Text("Paste your API key", style = MaterialTheme.typography.bodySmall) }
+                    )
+                    Text("Stored securely on this device · Expires after 24 hours", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    keyStatus = "Generating key link..."
+                                    try {
+                                        keyLink = api.generateKeyLink()
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Mine Study key link", keyLink))
+                                        keyStatus = "Key link copied. Open the page and obtain your API key."
+                                        openExternal(context, keyLink)
+                                    } catch (e: Exception) { keyStatus = e.message ?: "Could not generate key link" }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 7.dp)
+                        ) { Icon(Icons.Default.Key, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("Generate", maxLines = 1) }
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    keyStatus = "Verifying API key..."
+                                    try {
+                                        val count = api.verifyKey(apiKey)
+                                        api.apiKey = apiKey
+                                        keyStatus = "Verified · $count subjects found"
+                                        loadSubjects()
+                                    } catch (e: Exception) { keyStatus = e.message ?: "API key verification failed" }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 7.dp)
+                        ) { Text("Verify key", maxLines = 1) }
+                    }
+                    if (keyStatus.isNotBlank()) {
+                        Text(
+                            keyStatus,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (keyStatus.contains("Verified")) Color(0xFF71D6C5) else Color.Gray
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            api.apiKey = ""
+                            apiKey = ""
+                            keyStatus = "Saved API key cleared."
+                        },
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                    ) { Text("Clear saved key", color = Color(0xFFFF8A8A), style = MaterialTheme.typography.labelSmall) }
+                    if (keyLink.isNotBlank()) Text(keyLink, style = MaterialTheme.typography.labelSmall, color = Color(0xFFB5A9FF), maxLines = 2)
                 }
             },
             confirmButton = { TextButton(onClick = {
