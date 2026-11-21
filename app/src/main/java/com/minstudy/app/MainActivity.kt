@@ -480,6 +480,7 @@ private fun MineStudyApp() {
                         paused = downloadState.paused,
                         bytes = downloadState.bytes,
                         total = downloadState.total,
+                        speed = downloadState.speed,
                         onTogglePause = { if (downloadState.paused) DownloadService.resume(context) else DownloadService.pause(context) },
                         onCancel = { DownloadService.cancel(context) },
                         onOpen = { record ->
