@@ -246,7 +246,12 @@ private fun MineStudyApp() {
     var pendingDownloadTitle by remember { mutableStateOf("") }
     var pendingDownloadCategory by remember { mutableStateOf("") }
     val downloadState by DownloadService.state.collectAsState()
-    LaunchedEffect(downloadState.status) {
+    LaunchedEffect(downloadState.active, downloadState.status) {
+        if (downloadState.active || downloadState.status.startsWith("Download complete") ||
+            downloadState.status.startsWith("Download failed") || downloadState.status.startsWith("Download cancelled")) {
+            pendingDownloadTitle = ""
+            pendingDownloadCategory = ""
+        }
         if (downloadState.status.startsWith("Download complete")) {
             downloadRecords = DownloadRepository.list(context)
         }
@@ -330,10 +335,9 @@ private fun MineStudyApp() {
                 if (sourceUrl.isNullOrBlank()) throw IllegalStateException("Download URL is missing")
                 DownloadService.start(context, sourceUrl, title, category, isVideo)
             } catch (e: Exception) {
-                error = "Could not start download: ${e.message ?: "Unknown error"}"
-            } finally {
                 pendingDownloadTitle = ""
                 pendingDownloadCategory = ""
+                error = "Could not start download: ${e.message ?: "Unknown error"}"
             }
         }
     }
