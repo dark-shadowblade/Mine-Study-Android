@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -242,6 +243,8 @@ private fun MineStudyApp() {
     var keyStatus by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
     var downloadRecords by remember { mutableStateOf(DownloadRepository.list(context)) }
+    var pendingDownloadTitle by remember { mutableStateOf("") }
+    var pendingDownloadCategory by remember { mutableStateOf("") }
     val downloadState by DownloadService.state.collectAsState()
     LaunchedEffect(downloadState.status) {
         if (downloadState.status.startsWith("Download complete")) {
@@ -319,6 +322,8 @@ private fun MineStudyApp() {
             Toast.makeText(context, "A download is already running", Toast.LENGTH_SHORT).show()
             return
         }
+        pendingDownloadTitle = title
+        pendingDownloadCategory = category
         scope.launch {
             try {
                 val sourceUrl = resolveUrl()
@@ -326,6 +331,9 @@ private fun MineStudyApp() {
                 DownloadService.start(context, sourceUrl, title, category, isVideo)
             } catch (e: Exception) {
                 error = "Could not start download: ${e.message ?: "Unknown error"}"
+            } finally {
+                pendingDownloadTitle = ""
+                pendingDownloadCategory = ""
             }
         }
     }
@@ -439,6 +447,16 @@ private fun MineStudyApp() {
                             "Learning material", contents, busy, error,
                             showThumbnails = true,
                             actionLabel = if (type == "videos" || type == "DppVideos") "Play" else "Open PDF",
+                            downloadCategory = when (type) {
+                                "videos" -> "Lectures"
+                                "notes" -> "Notes"
+                                "DppNotes" -> "DPP"
+                                "DppVideos" -> "DPP Videos"
+                                else -> type
+                            },
+                            downloadRecords = downloadRecords,
+                            activeDownloadTitle = if (downloadState.active) downloadState.title else pendingDownloadTitle,
+                            activeDownloadCategory = if (downloadState.active) downloadState.category else pendingDownloadCategory,
                             onDownload = { item ->
                                 val video = type == "videos" || type == "DppVideos"
                                 val category = when (type) {
@@ -473,6 +491,8 @@ private fun MineStudyApp() {
                         onPrevious = { playLecture(currentItemIndex - 1) },
                         onNext = { playLecture(currentItemIndex + 1) },
                         onBack = { screen = "contents" },
+                        isDownloaded = downloadRecords.any { it.category == (if (type == "DppVideos") "DPP Videos" else "Lectures") && it.name.removeSuffix(".mp4").equals(currentTitle, true) },
+                        isDownloading = (downloadState.active && downloadState.title == currentTitle) || (pendingDownloadTitle == currentTitle),
                         onDownload = {
                             val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
                             startDownload(currentTitle, category, true) { currentVideo }
@@ -572,6 +592,10 @@ private fun ItemList(
     heading: String, items: List<StudyItem>, busy: Boolean, error: String,
     actionLabel: String = "Open",
     showThumbnails: Boolean = false,
+    downloadCategory: String = "",
+    downloadRecords: List<DownloadRecord> = emptyList(),
+    activeDownloadTitle: String = "",
+    activeDownloadCategory: String = "",
     onDownload: ((StudyItem) -> Unit)? = null,
     onSelect: (StudyItem) -> Unit, onRetry: () -> Unit
 ) {
@@ -618,10 +642,21 @@ private fun ItemList(
                             Text(actionLabel, maxLines = 1)
                         }
                         if (onDownload != null) {
-                            Button(onClick = { onDownload(item) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)) {
-                                Icon(Icons.Default.Download, null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Download")
+                            val cleanTitle = item.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                            val downloaded = downloadRecords.any { record ->
+                                record.category == downloadCategory && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)
+                            }
+                            val downloading = activeDownloadTitle == item.title && activeDownloadCategory == downloadCategory
+                            IconButton(
+                                onClick = { if (!downloaded && !downloading) onDownload(item) },
+                                enabled = !downloaded && !downloading,
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                when {
+                                    downloading -> CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.4.dp, color = Color(0xFFB5A9FF))
+                                    downloaded -> Icon(Icons.Default.CheckCircle, contentDescription = "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(25.dp))
+                                    else -> Icon(Icons.Default.Download, contentDescription = "Download", tint = Color(0xFF858B98), modifier = Modifier.size(25.dp))
+                                }
                             }
                         }
                     }
@@ -677,6 +712,8 @@ private fun VideoScreen(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
+    isDownloaded: Boolean = false,
+    isDownloading: Boolean = false,
     onDownload: () -> Unit
 ) {
     val context = LocalContext.current
@@ -819,8 +856,12 @@ private fun VideoScreen(
                 }
                 Text(title, color = Color.White, maxLines = 1, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 if (landscape) {
-                    TextButton(onClick = onDownload, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                        Icon(Icons.Default.Download, null, tint = Color.White, modifier = Modifier.size(19.dp))
+                    IconButton(onClick = onDownload, enabled = !isDownloaded && !isDownloading, modifier = Modifier.size(38.dp)) {
+                        when {
+                            isDownloading -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                            isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879))
+                            else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFFB8BEC9))
+                        }
                     }
                 }
                 SpeedPicker()
@@ -982,10 +1023,12 @@ private fun VideoScreen(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(title, modifier = Modifier.weight(1f), maxLines = 2, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                FilledTonalButton(onClick = onDownload, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
-                    Icon(Icons.Default.Download, null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("Download")
+                IconButton(onClick = onDownload, enabled = !isDownloaded && !isDownloading, modifier = Modifier.size(42.dp)) {
+                    when {
+                        isDownloading -> CircularProgressIndicator(Modifier.size(21.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
+                        isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(25.dp))
+                        else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFF858B98), modifier = Modifier.size(25.dp))
+                    }
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
