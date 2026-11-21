@@ -27,7 +27,9 @@ data class DownloadUiState(
     val paused: Boolean = false,
     val bytes: Long = 0L,
     val total: Long = -1L,
-    val speed: Long = 0L
+    val speed: Long = 0L,
+    val title: String = "",
+    val category: String = ""
 )
 
 class DownloadService : Service() {
@@ -113,7 +115,7 @@ class DownloadService : Service() {
         control = DownloadControl()
         lastProgressAt = System.currentTimeMillis()
         lastProgressBytes = 0L
-        mutableState.value = DownloadUiState(status = "Preparing • $currentTitle", active = true)
+        mutableState.value = DownloadUiState(status = "Preparing • $currentTitle", active = true, title = currentTitle, category = category)
         startForegroundCompat(buildNotification())
         serviceScope.launch {
             try {
@@ -131,13 +133,13 @@ class DownloadService : Service() {
                         updateNotification()
                     }
                 }
-                mutableState.value = DownloadUiState(status = "Download complete • ${record.name}", bytes = record.bytes, total = record.bytes)
+                mutableState.value = DownloadUiState(status = "Download complete • ${record.name}", bytes = record.bytes, total = record.bytes, title = currentTitle, category = category)
                 updateNotification(completed = true)
             } catch (e: CancellationException) {
-                mutableState.value = DownloadUiState(status = "Download cancelled • $currentTitle")
+                mutableState.value = DownloadUiState(status = "Download cancelled • $currentTitle", title = currentTitle, category = category)
                 updateNotification(completed = true)
             } catch (e: Exception) {
-                mutableState.value = DownloadUiState(status = "Download failed • ${e.message ?: "Network error"}")
+                mutableState.value = DownloadUiState(status = "Download failed • ${e.message ?: "Network error"}", title = currentTitle, category = category)
                 updateNotification(completed = true, failed = true)
             } finally {
                 control = null
