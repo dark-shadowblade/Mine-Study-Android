@@ -51,7 +51,16 @@ object ParallelCdnDownloader {
                 written.addAndGet(part.bytes.size.toLong())
                 progress(written.get(), total)
             }
-            writePart(first)
+            var firstCursor = 0L
+            var firstPart = first
+            while (firstCursor < minOf(CHUNK.toLong(), total)) {
+                if (firstPart.start != firstCursor) throw IOException("CDN returned a non-contiguous initial range")
+                writePart(firstPart)
+                firstCursor = firstPart.end + 1L
+                if (firstCursor < minOf(CHUNK.toLong(), total)) {
+                    firstPart = retryingFetch(base, firstCursor, minOf(CHUNK.toLong() - 1L, total - 1L), total)
+                }
+            }
 
             val next = AtomicInteger(CHUNK)
             coroutineScope {
