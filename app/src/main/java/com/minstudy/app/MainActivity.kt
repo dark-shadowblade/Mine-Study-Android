@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -689,6 +691,7 @@ private fun VideoScreen(
     var isScrubbing by remember { mutableStateOf(false) }
     var playerError by remember { mutableStateOf("") }
     var showControls by remember { mutableStateOf(true) }
+    var controlsLocked by remember { mutableStateOf(false) }
     var customSpeedDialog by remember { mutableStateOf(false) }
     var customSpeedText by remember { mutableStateOf("1.25") }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -792,6 +795,12 @@ private fun VideoScreen(
                         })
                     }
                 }
+                IconButton(onClick = {
+                    controlsLocked = true
+                    showControls = false
+                }) {
+                    Icon(Icons.Default.Lock, "Lock player controls", tint = fg)
+                }
                 if (light) {
                     IconButton(onClick = { fullScreen = false }) {
                         Icon(Icons.Default.FullscreenExit, "Exit fullscreen", tint = fg)
@@ -884,13 +893,25 @@ private fun VideoScreen(
     }
 
     if (fullScreen) {
-        Box(Modifier.fillMaxSize().background(Color.Black).clickable { showControls = !showControls }) {
+        Box(Modifier.fillMaxSize().background(Color.Black).clickable {
+            if (controlsLocked) {
+                controlsLocked = false
+                showControls = true
+            } else showControls = !showControls
+        }) {
             AndroidView(
                 factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER); keepScreenOn = true } },
                 update = { it.player = player },
                 modifier = Modifier.fillMaxSize()
             )
-            if (showControls) Controls(Modifier.align(Alignment.BottomCenter), light = true)
+            if (controlsLocked) {
+                Row(Modifier.align(Alignment.Center).background(Color(0xAA080A10), RoundedCornerShape(24.dp)).padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Lock, null, tint = Color.White)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Tap to unlock", color = Color.White)
+                }
+            } else if (showControls) Controls(Modifier.align(Alignment.BottomCenter), light = true)
         }
     } else {
         Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -901,13 +922,26 @@ private fun VideoScreen(
             }
             Box(
                 Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(18.dp))
-                    .clickable { showControls = !showControls }
+                    .clickable {
+                        if (controlsLocked) {
+                            controlsLocked = false
+                            showControls = true
+                        } else showControls = !showControls
+                    }
             ) {
                 AndroidView(
                     factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER); keepScreenOn = true } },
                     update = { it.player = player },
                     modifier = Modifier.fillMaxSize()
                 )
+                if (controlsLocked) {
+                    Row(Modifier.align(Alignment.Center).background(Color(0xAA080A10), RoundedCornerShape(24.dp)).padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Lock, null, tint = Color.White)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Tap video to unlock", color = Color.White)
+                    }
+                }
             }
             if (playerError.isNotBlank()) {
                 Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
