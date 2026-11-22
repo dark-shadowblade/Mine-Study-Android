@@ -285,11 +285,7 @@ class DownloadService : Service() {
                 .setContentText("${percent}% • ${human(s.bytes)} / ${human(s.total)} • ${human(s.speed)}/s")
         } else if (!completed) builder.setProgress(0, 0, true)
         if (!completed) {
-            val action = if (s.paused) ACTION_RESUME else ACTION_PAUSE
-            val label = if (s.paused) "Resume" else "Pause"
-            val icon = if (s.paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause
-            builder.addAction(icon, label, servicePending(action, 2))
-            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", servicePending(ACTION_CANCEL, 3))
+            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel all", servicePending(ACTION_CANCEL, 3))
         }
         return builder.build()
     }
