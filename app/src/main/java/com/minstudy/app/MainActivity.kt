@@ -791,6 +791,8 @@ private fun MineStudyApp() {
                         activeResourceDownloadKey = if (downloadState.active) downloadState.itemKey else pendingDownloadKey,
                         activeResourceDownloadCategory = if (downloadState.active) downloadState.category else pendingDownloadCategory,
                         resourceDownloadPercent = if (downloadState.active && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
+                        downloadQueueItems = downloadState.queueItems,
+                        downloadingResourceKeys = pendingDownloadKeys + downloadState.queueItems.map { it.itemKey }.filter { it.isNotBlank() }.toSet(),
                         onDownloadResource = { resource ->
                             val category = if (resource.isDpp) "DPP" else "Notes"
                             val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${resource.item.id}"
@@ -1161,7 +1163,9 @@ private fun VideoScreen(
     resourceItemKey: (LectureResource) -> String = { it.item.id },
     activeResourceDownloadKey: String = "",
     activeResourceDownloadCategory: String = "",
-    resourceDownloadPercent: Int = 0
+    resourceDownloadPercent: Int = 0,
+    downloadQueueItems: List<DownloadQueueEntry> = emptyList(),
+    downloadingResourceKeys: Set<String> = emptySet()
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -1684,7 +1688,7 @@ private fun VideoScreen(
                                 Text("Resources", modifier = Modifier.weight(1f), color = Color.White, fontWeight = FontWeight.Bold)
                                 IconButton(onClick = { showResources = false }) { Icon(Icons.Default.ArrowBack, "Close resources", tint = Color.White) }
                             }
-                            ResourceSection(resources, resourcesLoading, onOpenResource, Modifier.weight(1f), onDownloadResource, downloadRecords, resourceItemKey, activeResourceDownloadKey, activeResourceDownloadCategory, resourceDownloadPercent)
+                            ResourceSection(resources, resourcesLoading, onOpenResource, Modifier.weight(1f), onDownloadResource, downloadRecords, resourceItemKey, activeResourceDownloadKey, activeResourceDownloadCategory, resourceDownloadPercent, downloadQueueItems, downloadingResourceKeys)
                         }
                     }
                 }
@@ -1830,7 +1834,7 @@ private fun VideoScreen(
                 TextButton(onClick = onNext, enabled = hasNext) { Text("Next"); Icon(Icons.Default.SkipNext, null) }
             }
             if (playerError.isNotBlank()) Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
-            ResourceSection(resources, resourcesLoading, onOpenResource, modifier = Modifier.weight(1f), onDownload = onDownloadResource, downloadRecords = downloadRecords, itemKey = resourceItemKey, activeDownloadKey = activeResourceDownloadKey, activeDownloadCategory = activeResourceDownloadCategory, downloadPercent = resourceDownloadPercent)
+            ResourceSection(resources, resourcesLoading, onOpenResource, modifier = Modifier.weight(1f), onDownload = onDownloadResource, downloadRecords = downloadRecords, itemKey = resourceItemKey, activeDownloadKey = activeResourceDownloadKey, activeDownloadCategory = activeResourceDownloadCategory, downloadPercent = resourceDownloadPercent, queueItems = downloadQueueItems, downloadingKeys = downloadingResourceKeys)
         }
     }
 }
@@ -1846,7 +1850,9 @@ private fun ResourceSection(
     itemKey: (LectureResource) -> String = { it.item.id },
     activeDownloadKey: String = "",
     activeDownloadCategory: String = "",
-    downloadPercent: Int = 0
+    downloadPercent: Int = 0,
+    queueItems: List<DownloadQueueEntry> = emptyList(),
+    downloadingKeys: Set<String> = emptySet()
 ) {
     Column(
         modifier.fillMaxWidth()
@@ -1872,7 +1878,7 @@ private fun ResourceSection(
                 if (notes.isNotEmpty()) {
                     item { Text("NOTES", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
                     items(notes, key = { "note_${it.item.id}" }) { resource ->
-                        ResourceRow(resource, onOpen, onDownload, downloadRecords, itemKey(resource), activeDownloadKey, activeDownloadCategory, downloadPercent)
+                        ResourceRow(resource, onOpen, onDownload, downloadRecords, itemKey(resource), activeDownloadKey, activeDownloadCategory, downloadPercent, queueItems, downloadingKeys)
                     }
                 }
                 if (dpp.isNotEmpty()) {
@@ -1895,7 +1901,9 @@ private fun ResourceRow(
     itemKey: String,
     activeDownloadKey: String,
     activeDownloadCategory: String,
-    downloadPercent: Int
+    downloadPercent: Int,
+    queueItems: List<DownloadQueueEntry>,
+    downloadingKeys: Set<String>
 ) {
     val category = if (resource.isDpp) "DPP" else "Notes"
     val cleanTitle = resource.item.title.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim()
@@ -1903,7 +1911,11 @@ private fun ResourceRow(
         record.category == category && (record.itemKey == itemKey ||
             (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)))
     }
-    val downloading = activeDownloadKey == itemKey && activeDownloadCategory == category
+    val queueEntry = queueItems.firstOrNull { it.itemKey == itemKey && it.category == category }
+    val downloading = itemKey in downloadingKeys || (activeDownloadKey == itemKey && activeDownloadCategory == category)
+    val itemPercent = queueEntry?.takeIf { it.total > 0L }?.let {
+        ((it.bytes * 100L) / it.total).toInt().coerceIn(0, 99)
+    } ?: downloadPercent
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF202838)).clickable { onOpen(resource) }
@@ -1921,7 +1933,7 @@ private fun ResourceRow(
             when {
                 downloading -> Box(contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(21.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
-                    Text("$downloadPercent%", fontSize = 7.sp, color = Color.White)
+                    Text("${if (queueEntry?.active == false) "Q" else "$itemPercent%"}", fontSize = 7.sp, color = Color.White)
                 }
                 downloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(19.dp))
                 else -> Icon(Icons.Default.Download, "Download resource", tint = Color(0xFF858B98), modifier = Modifier.size(19.dp))
