@@ -18,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.ArrayDeque
 import kotlin.math.max
@@ -260,18 +261,24 @@ class DownloadService : Service() {
                 val now = System.currentTimeMillis()
                 val elapsed = (now - lastProgressAt).coerceAtLeast(1L)
                 val speed = if (elapsed >= 700L) ((bytes - lastProgressBytes) * 1000L / elapsed).coerceAtLeast(0L) else mutableState.value.speed
-                val updatedQueue = mutableState.value.queueItems.map { entry -> if (entry.id == id) entry.copy(bytes = bytes, total = total) else entry }
-                mutableState.value = mutableState.value.copy(
-                    status = "Downloading • ${task.title}",
-                    active = true,
-                    bytes = bytes,
-                    total = total,
-                    speed = speed,
-                    title = task.title,
-                    category = task.category,
-                    itemKey = task.itemKey,
-                    queueItems = updatedQueue
-                )
+                // Parallel workers report progress concurrently; update atomically
+                // so one worker cannot overwrite another worker's queue row.
+                mutableState.update { state ->
+                    val updatedQueue = state.queueItems.map { entry ->
+                        if (entry.id == id) entry.copy(bytes = bytes, total = total) else entry
+                    }
+                    state.copy(
+                        status = "Downloading • ${task.title}",
+                        active = true,
+                        bytes = bytes,
+                        total = total,
+                        speed = speed,
+                        title = task.title,
+                        category = task.category,
+                        itemKey = task.itemKey,
+                        queueItems = updatedQueue
+                    )
+                }
                 val lastItemAt = itemNotificationTimes[id] ?: 0L
                 if (now - lastItemAt >= 700L) {
                     itemNotificationTimes[id] = now
@@ -317,8 +324,8 @@ class DownloadService : Service() {
         }
     }
 
-    private fun queueSnapshot(): List<DownloadQueueEntry> {
-        val previous = mutableState.value.queueItems.associateBy { it.id }
+    private fun queueSnapshot(previousItems: List<DownloadQueueEntry>): List<DownloadQueueEntry> {
+        val previous = previousItems.associateBy { it.id }
         return active.map { (id, pair) ->
             val progress = previous[id]
             DownloadQueueEntry(id, pair.first.title, pair.first.category, true, pair.second.paused, pair.first.itemKey, progress?.bytes ?: 0L, progress?.total ?: -1L)
@@ -326,20 +333,21 @@ class DownloadService : Service() {
     }
 
     private fun refreshQueueState(message: String) {
-        val previous = mutableState.value
         val first = active.values.firstOrNull { !it.second.paused }?.first ?: active.values.firstOrNull()?.first
-        mutableState.value = previous.copy(
-            status = message,
-            active = active.isNotEmpty() || pending.isNotEmpty(),
-            paused = active.isNotEmpty() && active.values.all { it.second.paused },
-            title = first?.title ?: previous.title,
-            category = first?.category ?: previous.category,
-            itemKey = first?.itemKey ?: previous.itemKey,
-            runningCount = active.values.count { !it.second.paused },
-            queuedCount = pending.size,
-            queueItems = queueSnapshot(),
-            maxParallel = maxParallel
-        )
+        mutableState.update { previous ->
+            previous.copy(
+                status = message,
+                active = active.isNotEmpty() || pending.isNotEmpty(),
+                paused = active.isNotEmpty() && active.values.all { it.second.paused },
+                title = first?.title ?: previous.title,
+                category = first?.category ?: previous.category,
+                itemKey = first?.itemKey ?: previous.itemKey,
+                runningCount = active.values.count { !it.second.paused },
+                queuedCount = pending.size,
+                queueItems = queueSnapshot(previous.queueItems),
+                maxParallel = maxParallel
+            )
+        }
         if (foregroundStarted) updateNotification()
     }
 
