@@ -497,8 +497,7 @@ private fun MineStudyApp() {
                 val contentPath = "/batch/${api.batchId}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type=${enc(type)}"
                 contents = api.list(api.get(contentPath), "contents")
                 screen = "contents"
-            } catch (e: Exception) {                error = e.message ?: "Could not resume your last chapter"            } finally { busy = false }        }
-    }
+            } catch (e: Exception) {                error = e.message ?: "Could not resume your last chapter"            } finally { busy = false }        }    }
 
     fun goBack() {
         screen = when (screen) {
@@ -997,8 +996,7 @@ private fun VideoScreen(
     var buffering by remember { mutableStateOf(true) }
     var positionMs by remember { mutableLongStateOf(0L) }    var durationMs by remember { mutableLongStateOf(0L) }
     var showRemainingTime by remember { mutableStateOf(false) }    var isScrubbing by remember { mutableStateOf(false) }    var playerError by remember { mutableStateOf("") }
-    val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }    val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
     var volume by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
     var volumePanel by remember { mutableStateOf(false) }
     var previousVolume by remember { mutableIntStateOf(volume.coerceAtLeast(1)) }
@@ -1026,6 +1024,7 @@ private fun VideoScreen(
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == com.google.android.exoplayer2.Player.STATE_BUFFERING
+                if (buffering) showControls = true
                 if (state == com.google.android.exoplayer2.Player.STATE_ENDED && hasNext) onNext()
             }
             override fun onPlayerError(error: com.google.android.exoplayer2.PlaybackException) {
