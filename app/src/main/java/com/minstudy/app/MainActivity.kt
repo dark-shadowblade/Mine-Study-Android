@@ -1884,7 +1884,7 @@ private fun ResourceSection(
                 if (dpp.isNotEmpty()) {
                     item { Text("DPP", color = Color(0xFF71D6C5), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
                     items(dpp, key = { "dpp_${it.item.id}" }) { resource ->
-                        ResourceRow(resource, onOpen, onDownload, downloadRecords, itemKey(resource), activeDownloadKey, activeDownloadCategory, downloadPercent)
+                        ResourceRow(resource, onOpen, onDownload, downloadRecords, itemKey(resource), activeDownloadKey, activeDownloadCategory, downloadPercent, queueItems, downloadingKeys)
                     }
                 }
             }
@@ -1915,7 +1915,7 @@ private fun ResourceRow(
     val downloading = itemKey in downloadingKeys || (activeDownloadKey == itemKey && activeDownloadCategory == category)
     val itemPercent = queueEntry?.takeIf { it.total > 0L }?.let {
         ((it.bytes * 100L) / it.total).toInt().coerceIn(0, 99)
-    } ?: downloadPercent
+    } ?: if (activeDownloadKey == itemKey && activeDownloadCategory == category) downloadPercent else 0
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF202838)).clickable { onOpen(resource) }
