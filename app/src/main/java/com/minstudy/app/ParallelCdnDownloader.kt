@@ -33,31 +33,34 @@ object ParallelCdnDownloader {
         val total: Long,
         val chunkCount: Int
     ) {
-        private val completed = BooleanArray(chunkCount)
+        private val positions = LongArray(chunkCount) { it.toLong() * CHUNK }
 
-        @Synchronized fun isComplete(index: Int): Boolean = completed[index]
+        @Synchronized fun nextPosition(index: Int): Long = positions[index]
 
-        @Synchronized fun markComplete(index: Int) {
-            completed[index] = true
+        @Synchronized fun isComplete(index: Int): Boolean {
+            val end = minOf((index.toLong() + 1L) * CHUNK, total)
+            return positions[index] >= end
+        }
+
+        @Synchronized fun advance(index: Int, next: Long) {
+            val end = minOf((index.toLong() + 1L) * CHUNK, total)
+            if (next < positions[index] || next > end) throw IOException("Invalid download checkpoint position")
+            positions[index] = next
             persist()
         }
 
-        @Synchronized fun completedBytes(): Long {
-            var sum = 0L
-            completed.forEachIndexed { index, done ->
-                if (done) sum += minOf(CHUNK.toLong(), total - index.toLong() * CHUNK)
-            }
-            return sum
+        @Synchronized fun completedBytes(): Long = positions.indices.sumOf { index ->
+            (positions[index] - index.toLong() * CHUNK).coerceAtLeast(0L)
         }
 
         @Synchronized private fun persist() {
             val array = JSONArray()
-            completed.forEach { array.put(it) }
+            positions.forEach { array.put(it) }
             val json = JSONObject()
                 .put("fingerprint", fingerprint)
                 .put("total", total)
                 .put("chunkSize", CHUNK)
-                .put("completed", array)
+                .put("positions", array)
             val temp = File(file.parentFile, file.name + ".tmp")
             temp.writeText(json.toString())
             if (file.exists() && !file.delete()) throw IOException("Could not replace download checkpoint")
@@ -71,13 +74,22 @@ object ParallelCdnDownloader {
                 val count = countLong.toInt()
                 val checkpoint = Checkpoint(file, fingerprint, total, count)
                 val saved = runCatching { JSONObject(file.readText()) }.getOrNull()
-                val chunks = saved?.optJSONArray("completed")
+                val positions = saved?.optJSONArray("positions")
                 val valid = saved?.optString("fingerprint") == fingerprint &&
                     saved.optLong("total", -1L) == total &&
                     saved.optInt("chunkSize", -1) == CHUNK &&
-                    chunks?.length() == count
-                if (valid && chunks != null) {
-                    for (i in 0 until count) checkpoint.completed[i] = chunks.optBoolean(i, false)
+                    positions?.length() == count
+                if (valid && positions != null) {
+                    for (i in 0 until count) {
+                        val start = i.toLong() * CHUNK
+                        val end = minOf(start + CHUNK, total)
+                        val savedPosition = positions.optLong(i, -1L)
+                        if (savedPosition !in start..end) {
+                            file.delete()
+                            return Checkpoint(file, fingerprint, total, count)
+                        }
+                        checkpoint.positions[i] = savedPosition
+                    }
                 } else {
                     file.delete()
                     File(file.parentFile, file.name + ".tmp").delete()
@@ -129,7 +141,6 @@ object ParallelCdnDownloader {
         RandomAccessFile(target, "rw").use { file ->
             file.setLength(total)
             val count = checkpoint.chunkCount
-            val completedCount = AtomicInteger(0)
             progress(checkpoint.completedBytes(), total)
 
             suspend fun writeChunk(index: Int, initial: Part? = null) {
@@ -137,8 +148,8 @@ object ParallelCdnDownloader {
                 if (checkpoint.isComplete(index)) return
                 val start = index.toLong() * CHUNK
                 val end = minOf(start + CHUNK - 1L, total - 1L)
-                var cursor = start
-                var pending = initial
+                var cursor = checkpoint.nextPosition(index)
+                var pending = if (cursor == start) initial else null
                 while (cursor <= end) {
                     control.checkpoint()
                     val part = pending ?: retryingFetch(base, cursor, end, total)
@@ -149,12 +160,13 @@ object ParallelCdnDownloader {
                     synchronized(file) {
                         file.seek(part.start)
                         file.write(part.bytes)
+                        file.fd.sync()
                     }
                     cursor = part.end + 1L
+                    checkpoint.advance(index, cursor)
+                    progress(checkpoint.completedBytes(), total)
                 }
-                checkpoint.markComplete(index)
                 completedCount.incrementAndGet()
-                progress(checkpoint.completedBytes(), total)
             }
 
             coroutineScope {
