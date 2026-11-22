@@ -520,8 +520,8 @@ private fun MineStudyApp() {
                     "player" -> VideoScreen(
                         currentTitle,
                         currentVideo,
-                        hasPrevious = currentItemIndex > 0,
-                        hasNext = currentItemIndex in 0 until contents.lastIndex,
+                        hasPrevious = currentItemIndex < contents.lastIndex,
+                        hasNext = currentItemIndex > 0,
                         onPrevious = { playLecture(currentItemIndex + 1) },
                         onNext = { playLecture(currentItemIndex - 1) },
                         onBack = { screen = "contents" },
@@ -567,6 +567,9 @@ private fun MineStudyApp() {
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
+            shape = RoundedCornerShape(22.dp),
+            containerColor = Color(0xFF141A26),
+            tonalElevation = 0.dp,
             title = {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("Settings", fontWeight = FontWeight.Bold)
@@ -599,6 +602,12 @@ private fun MineStudyApp() {
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF9B8CFF),
+                            unfocusedBorderColor = Color(0xFF343D50),
+                            focusedContainerColor = Color(0xFF101521),
+                            unfocusedContainerColor = Color(0xFF101521)
+                        ),
                         placeholder = { Text("Paste your API key", style = MaterialTheme.typography.bodySmall) }
                     )
                     Text("Stored securely on this device · Expires after 24 hours", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
@@ -943,7 +952,10 @@ private fun VideoScreen(
                 if (landscape) {
                     IconButton(onClick = onDownload, enabled = !isDownloaded && !isDownloading, modifier = Modifier.size(38.dp)) {
                         when {
-                            isDownloading -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                            isDownloading -> Box(contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
+                                Text("$downloadPercent%", color = Color.White, fontSize = 7.sp)
+                            }
                             isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879))
                             else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFFB8BEC9))
                         }
@@ -1029,7 +1041,7 @@ private fun VideoScreen(
                         valueRange = 0f..maxVolume.toFloat(),
                         modifier = Modifier.weight(1f).height(18.dp)
                     )
-                    Text("${volume * 100 / maxVolume}%", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text(if (volume == 0) "Muted" else "Volume", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
