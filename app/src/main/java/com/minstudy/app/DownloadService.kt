@@ -101,7 +101,10 @@ class DownloadService : Service() {
             }
             ACTION_CANCEL -> control?.cancelled = true
         }
-        return START_NOT_STICKY
+        // Ask Android to redeliver the original download intent if the process is
+        // killed while the foreground service is running. The download restarts
+        // safely from byte zero rather than leaving a falsely completed file.
+        return START_REDELIVER_INTENT
     }
 
     private fun begin(intent: Intent) {
