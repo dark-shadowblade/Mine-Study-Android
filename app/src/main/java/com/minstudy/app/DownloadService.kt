@@ -19,6 +19,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.ArrayDeque
 import kotlin.math.max
 
 data class DownloadUiState(
@@ -30,7 +31,9 @@ data class DownloadUiState(
     val speed: Long = 0L,
     val title: String = "",
     val category: String = "",
-    val itemKey: String = ""
+    val itemKey: String = "",
+    val runningCount: Int = 0,
+    val queuedCount: Int = 0
 )
 
 class DownloadService : Service() {
@@ -68,8 +71,18 @@ class DownloadService : Service() {
         }
     }
 
+    private data class Task(
+        val url: String,
+        val title: String,
+        val category: String,
+        val video: Boolean,
+        val itemKey: String
+    )
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var control: DownloadControl? = null
+    private val pending = ArrayDeque<Task>()
+    private val active = linkedMapOf<String, Pair<Task, DownloadControl>>()
+    private var foregroundStarted = false
     private var currentTitle = "Study material"
     private var lastProgressAt = 0L
     private var lastProgressBytes = 0L
@@ -88,72 +101,122 @@ class DownloadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val command = intent ?: return START_NOT_STICKY
         when (command.action) {
-            ACTION_START -> begin(command)
+            ACTION_START -> enqueue(command)
             ACTION_PAUSE -> {
-                control?.paused = true
-                mutableState.value = mutableState.value.copy(paused = true, status = "Paused • $currentTitle")
+                active.values.forEach { it.second.paused = true }
+                mutableState.value = mutableState.value.copy(paused = true, status = "Pausing downloads…")
                 updateNotification()
             }
             ACTION_RESUME -> {
-                control?.paused = false
-                mutableState.value = mutableState.value.copy(paused = false, status = "Downloading • $currentTitle")
+                active.values.forEach { it.second.paused = false }
+                mutableState.value = mutableState.value.copy(paused = false, status = "Downloading \${active.size} files")
                 updateNotification()
             }
-            ACTION_CANCEL -> control?.cancelled = true
+            ACTION_CANCEL -> {
+                pending.clear()
+                active.values.forEach { it.second.cancelled = true }
+                refreshQueueState("Cancelling downloads…")
+            }
         }
-        // Ask Android to redeliver the original download intent if the process is
-        // killed while the foreground service is running. The download restarts
-        // safely from byte zero rather than leaving a falsely completed file.
         return START_REDELIVER_INTENT
     }
 
-    private fun begin(intent: Intent) {
-        if (mutableState.value.active) return
-        val url = intent.getStringExtra(EXTRA_URL).orEmpty()
-        currentTitle = intent.getStringExtra(EXTRA_TITLE) ?: "Study material"
-        val category = intent.getStringExtra(EXTRA_CATEGORY) ?: "Lectures"
-        val video = intent.getBooleanExtra(EXTRA_VIDEO, true)
-        val itemKey = intent.getStringExtra(EXTRA_ITEM_KEY).orEmpty()
-        if (url.isBlank()) {
-            mutableState.value = DownloadUiState(status = "Download failed: URL missing")
-            stopSelf()
+    private fun enqueue(intent: Intent) {
+        val task = Task(
+            intent.getStringExtra(EXTRA_URL).orEmpty(),
+            intent.getStringExtra(EXTRA_TITLE) ?: "Study material",
+            intent.getStringExtra(EXTRA_CATEGORY) ?: "Lectures",
+            intent.getBooleanExtra(EXTRA_VIDEO, true),
+            intent.getStringExtra(EXTRA_ITEM_KEY).orEmpty()
+        )
+        if (task.url.isBlank()) {
+            mutableState.value = mutableState.value.copy(status = "Download failed: URL missing")
             return
         }
-        control = DownloadControl()
+        val duplicate = pending.any { it.itemKey == task.itemKey && it.itemKey.isNotBlank() } ||
+            active.values.any { it.first.itemKey == task.itemKey && it.itemKey.isNotBlank() }
+        if (duplicate) return
+        pending.addLast(task)
+        if (!foregroundStarted) {
+            startForegroundCompat(buildNotification())
+            foregroundStarted = true
+        }
+        pumpQueue()
+        refreshQueueState("Queued \${task.title}")
+    }
+
+    private fun pumpQueue() {
+        while (active.size < 3 && pending.isNotEmpty()) {
+            val task = pending.removeFirst()
+            val id = task.itemKey.ifBlank { "\${task.title}:\${System.nanoTime()}" }
+            val taskControl = DownloadControl()
+            active[id] = task to taskControl
+            serviceScope.launch { runTask(id, task, taskControl) }
+        }
+    }
+
+    private suspend fun runTask(id: String, task: Task, taskControl: DownloadControl) {
+        currentTitle = task.title
         lastProgressAt = System.currentTimeMillis()
         lastProgressBytes = 0L
-        mutableState.value = DownloadUiState(status = "Preparing • $currentTitle", active = true, title = currentTitle, category = category, itemKey = itemKey)
-        startForegroundCompat(buildNotification())
-        serviceScope.launch {
-            try {
-                mutableState.value = mutableState.value.copy(status = "Downloading • $currentTitle")
-                val record = DownloadRepository.download(
-                    this@DownloadService, url, currentTitle, category, video, itemKey, control!!
-                ) { bytes, total ->
-                    val now = System.currentTimeMillis()
-                    val elapsed = (now - lastProgressAt).coerceAtLeast(1L)
-                    val speed = if (elapsed >= 700L) ((bytes - lastProgressBytes) * 1000L / elapsed).coerceAtLeast(0L) else mutableState.value.speed
-                    mutableState.value = mutableState.value.copy(bytes = bytes, total = total, speed = speed, itemKey = itemKey)
-                    if (elapsed >= 700L) {
-                        lastProgressAt = now
-                        lastProgressBytes = bytes
-                        updateNotification()
-                    }
+        refreshQueueState("Downloading • \${task.title}")
+        try {
+            val record = DownloadRepository.download(
+                this@DownloadService, task.url, task.title, task.category, task.video, task.itemKey, taskControl
+            ) { bytes, total ->
+                val now = System.currentTimeMillis()
+                val elapsed = (now - lastProgressAt).coerceAtLeast(1L)
+                val speed = if (elapsed >= 700L) ((bytes - lastProgressBytes) * 1000L / elapsed).coerceAtLeast(0L) else mutableState.value.speed
+                mutableState.value = mutableState.value.copy(
+                    status = "Downloading • \${task.title}",
+                    active = true,
+                    bytes = bytes,
+                    total = total,
+                    speed = speed,
+                    title = task.title,
+                    category = task.category,
+                    itemKey = task.itemKey
+                )
+                if (elapsed >= 700L) {
+                    lastProgressAt = now
+                    lastProgressBytes = bytes
+                    updateNotification()
                 }
-                mutableState.value = DownloadUiState(status = "Download complete • ${record.name}", bytes = record.bytes, total = record.bytes, title = currentTitle, category = category, itemKey = itemKey)
-                updateNotification(completed = true)
-            } catch (e: CancellationException) {
-                mutableState.value = DownloadUiState(status = "Download cancelled • $currentTitle", title = currentTitle, category = category)
-                updateNotification(completed = true)
-            } catch (e: Exception) {
-                mutableState.value = DownloadUiState(status = "Download failed • ${e.message ?: "Network error"}", title = currentTitle, category = category)
-                updateNotification(completed = true, failed = true)
-            } finally {
-                control = null
+            }
+            refreshQueueState("Completed • \${record.name}")
+        } catch (e: CancellationException) {
+            refreshQueueState("Cancelled • \${task.title}")
+        } catch (e: Exception) {
+            refreshQueueState("Failed • \${task.title}: \${e.message ?: "Network error"}")
+        } finally {
+            active.remove(id)
+            pumpQueue()
+            if (active.isEmpty() && pending.isEmpty()) {
+                val previous = mutableState.value
+                mutableState.value = previous.copy(active = false, paused = false, runningCount = 0, queuedCount = 0)
                 stopForeground(STOP_FOREGROUND_DETACH)
+                foregroundStarted = false
                 stopSelf()
+            } else {
+                refreshQueueState("Downloading \${active.size} • Queued \${pending.size}")
             }
         }
+    }
+
+    private fun refreshQueueState(message: String) {
+        val previous = mutableState.value
+        val first = active.values.firstOrNull()?.first
+        mutableState.value = previous.copy(
+            status = message,
+            active = active.isNotEmpty() || pending.isNotEmpty(),
+            paused = active.isNotEmpty() && active.values.all { it.second.paused },
+            title = first?.title ?: previous.title,
+            category = first?.category ?: previous.category,
+            itemKey = first?.itemKey ?: previous.itemKey,
+            runningCount = active.size,
+            queuedCount = pending.size
+        )
+        if (foregroundStarted) updateNotification()
     }
 
     private fun startForegroundCompat(notification: Notification) {
