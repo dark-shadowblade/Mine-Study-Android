@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
 import java.util.ArrayDeque
 import kotlin.math.max
 
-data class DownloadQueueEntry(val id: String, val title: String, val category: String, val active: Boolean, val paused: Boolean)
+data class DownloadQueueEntry(val id: String, val title: String, val category: String, val active: Boolean, val paused: Boolean, val itemKey: String = "")
 
 data class DownloadUiState(
     val status: String = "",
@@ -294,8 +294,8 @@ class DownloadService : Service() {
             itemKey = first?.itemKey ?: previous.itemKey,
             runningCount = active.values.count { !it.second.paused },
             queuedCount = pending.size,
-            queueItems = active.map { (id, pair) -> DownloadQueueEntry(id, pair.first.title, pair.first.category, true, pair.second.paused) } +
-                pending.map { task -> DownloadQueueEntry(task.id, task.title, task.category, false, false) },
+            queueItems = active.map { (id, pair) -> DownloadQueueEntry(id, pair.first.title, pair.first.category, true, pair.second.paused, pair.first.itemKey) } +
+                pending.map { task -> DownloadQueueEntry(task.id, task.title, task.category, false, false, task.itemKey) },
             maxParallel = maxParallel
         )
         if (foregroundStarted) updateNotification()
