@@ -44,6 +44,7 @@ class DownloadService : Service() {
     companion object {
         private const val CHANNEL = "mine_study_downloads"
         private const val NOTIFICATION_ID = 4107
+        private const val NOTIFICATION_GROUP = "mine_study_individual_downloads"
         private const val ACTION_START = "com.minstudy.app.download.START"
         private const val ACTION_PAUSE = "com.minstudy.app.download.PAUSE"
         private const val ACTION_RESUME = "com.minstudy.app.download.RESUME"
@@ -113,6 +114,7 @@ class DownloadService : Service() {
     private var currentTitle = "Study material"
     private var lastProgressAt = 0L
     private var lastProgressBytes = 0L
+    private val itemNotificationTimes = mutableMapOf<String, Long>()
 
     override fun onCreate() {
         super.onCreate()
@@ -270,6 +272,11 @@ class DownloadService : Service() {
                     itemKey = task.itemKey,
                     queueItems = updatedQueue
                 )
+                val lastItemAt = itemNotificationTimes[id] ?: 0L
+                if (now - lastItemAt >= 700L) {
+                    itemNotificationTimes[id] = now
+                    notifyItem(task, bytes, total, taskControl.paused)
+                }
                 if (elapsed >= 700L) {
                     lastProgressAt = now
                     lastProgressBytes = bytes
@@ -284,6 +291,8 @@ class DownloadService : Service() {
             refreshQueueState("Failed • ${task.title}: $reason")
         } finally {
             active.remove(id)
+            getSystemService(NotificationManager::class.java).cancel(itemNotificationId(id))
+            itemNotificationTimes.remove(id)
             resumeRequested.remove(id)
             pumpQueue()
             if (active.isEmpty() && pending.isEmpty()) {
@@ -359,8 +368,7 @@ class DownloadService : Service() {
         }
         val detail = when {
             completed -> s.status
-            hasAggregateProgress -> "$percent% overall • ${human(downloadedBytes)} / ${human(totalBytes)} • $queued queued"
-            else -> "$running active • $queued queued"
+            else -> "$running downloading • $queued queued · each file has its own progress notification"
         }
         val openIntent = packageManager.getLaunchIntentForPackage(packageName)
         val content = openIntent?.let { PendingIntent.getActivity(this, 1, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
@@ -374,8 +382,17 @@ class DownloadService : Service() {
             .setOngoing(!completed)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-        if (!completed && hasAggregateProgress) builder.setProgress(100, percent, false)
-        else if (!completed) builder.setProgress(0, 0, true)
+            .setGroup(NOTIFICATION_GROUP)
+            .setGroupSummary(true)
+        if (!completed && activeItems.isNotEmpty()) {
+            val style = NotificationCompat.InboxStyle()
+            activeItems.forEach { item ->
+                val pct = if (item.total > 0L) ((item.bytes * 100L) / item.total).toInt().coerceIn(0, 99) else 0
+                style.addLine("${item.title}: ${if (item.paused) "Paused" else "$pct%"}")
+            }
+            if (queued > 0) style.addLine("$queued waiting in queue")
+            builder.setStyle(style)
+        }
         if (!completed) builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel all", servicePending(ACTION_CANCEL, 3))
         return builder.build()
     }
@@ -384,8 +401,49 @@ class DownloadService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     private fun updateNotification(completed: Boolean = false, failed: Boolean = false) {
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(completed, failed))
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification(completed, failed))
+        if (!completed) {
+            active.forEach { (id, pair) ->
+                val entry = mutableState.value.queueItems.firstOrNull { it.id == id }
+                if (entry != null) notifyItem(pair.first, entry.bytes, entry.total, pair.second.paused)
+            }
+        } else {
+            active.keys.forEach { manager.cancel(itemNotificationId(it)) }
+        }
     }
+
+    private fun itemNotificationId(id: String): Int = 50000 + (id.hashCode() and 0x3fffffff)
+
+    private fun notifyItem(task: Task, bytes: Long, total: Long, paused: Boolean) {
+        val percent = if (total > 0L) ((bytes * 100L) / total).toInt().coerceIn(0, 99) else 0
+        val builder = NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle(task.title)
+            .setSubText("Mine Study · ${task.category}")
+            .setContentText(if (paused) "Paused · ${human(bytes)} downloaded" else if (total > 0L) "$percent% · ${human(bytes)} / ${human(total)}" else "${human(bytes)} downloaded")
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setGroup(NOTIFICATION_GROUP)
+            .addAction(
+                if (paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause,
+                if (paused) "Resume" else "Pause",
+                serviceItemPending(if (paused) ACTION_RESUME_ITEM else ACTION_PAUSE_ITEM, task.id)
+            )
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", serviceItemPending(ACTION_CANCEL_ITEM, task.id))
+        if (total > 0L) builder.setProgress(100, percent, false) else builder.setProgress(0, 0, true)
+        getSystemService(NotificationManager::class.java).notify(itemNotificationId(task.id), builder.build())
+    }
+
+    private fun serviceItemPending(action: String, id: String): PendingIntent =
+        PendingIntent.getService(
+            this,
+            itemNotificationId(id) xor action.hashCode(),
+            Intent(this, DownloadService::class.java).setAction(action).putExtra(EXTRA_CONTROL_KEY, id),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
     private fun human(bytes: Long): String {
         if (bytes < 1024L) return "$bytes B"
