@@ -50,7 +50,12 @@ class DownloadService : Service() {
         private const val ACTION_CANCEL = "com.minstudy.app.download.CANCEL"
         private const val ACTION_PAUSE_ITEM = "com.minstudy.app.download.PAUSE_ITEM"
         private const val ACTION_RESUME_ITEM = "com.minstudy.app.download.RESUME_ITEM"
-        private const val EXTRA_CONTROL_KEY = "control_key"\n        private const val EXTRA_LIMIT = "parallel_limit"\n        private const val ACTION_SET_LIMIT = "com.minstudy.app.download.SET_LIMIT"\n        private const val ACTION_MOVE = "com.minstudy.app.download.MOVE"\n        private const val ACTION_REMOVE_QUEUED = "com.minstudy.app.download.REMOVE_QUEUED"\n        private const val EXTRA_MOVE = "move_direction"
+        private const val EXTRA_CONTROL_KEY = "control_key"
+        private const val EXTRA_LIMIT = "parallel_limit"
+        private const val ACTION_SET_LIMIT = "com.minstudy.app.download.SET_LIMIT"
+        private const val ACTION_MOVE = "com.minstudy.app.download.MOVE"
+        private const val ACTION_REMOVE_QUEUED = "com.minstudy.app.download.REMOVE_QUEUED"
+        private const val EXTRA_MOVE = "move_direction"
         private const val EXTRA_URL = "url"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_CATEGORY = "category"
@@ -74,7 +79,10 @@ class DownloadService : Service() {
         fun resume(context: Context) = command(context, ACTION_RESUME)
         fun cancel(context: Context) = command(context, ACTION_CANCEL)
         fun pauseItem(context: Context, key: String) = itemCommand(context, ACTION_PAUSE_ITEM, key)
-        fun resumeItem(context: Context, key: String) = itemCommand(context, ACTION_RESUME_ITEM, key)\n        fun setParallelLimit(context: Context, value: Int) { context.startService(Intent(context, DownloadService::class.java).setAction(ACTION_SET_LIMIT).putExtra(EXTRA_LIMIT, value.coerceIn(1, 5))) }\n        fun moveQueued(context: Context, id: String, direction: String) { context.startService(Intent(context, DownloadService::class.java).setAction(ACTION_MOVE).putExtra(EXTRA_CONTROL_KEY, id).putExtra(EXTRA_MOVE, direction)) }\n        fun removeQueued(context: Context, id: String) = itemCommand(context, ACTION_REMOVE_QUEUED, id)
+        fun resumeItem(context: Context, key: String) = itemCommand(context, ACTION_RESUME_ITEM, key)
+        fun setParallelLimit(context: Context, value: Int) { context.startService(Intent(context, DownloadService::class.java).setAction(ACTION_SET_LIMIT).putExtra(EXTRA_LIMIT, value.coerceIn(1, 5))) }
+        fun moveQueued(context: Context, id: String, direction: String) { context.startService(Intent(context, DownloadService::class.java).setAction(ACTION_MOVE).putExtra(EXTRA_CONTROL_KEY, id).putExtra(EXTRA_MOVE, direction)) }
+        fun removeQueued(context: Context, id: String) = itemCommand(context, ACTION_REMOVE_QUEUED, id)
         private fun itemCommand(context: Context, action: String, key: String) {
             context.startService(Intent(context, DownloadService::class.java).setAction(action).putExtra(EXTRA_CONTROL_KEY, key))
         }
@@ -95,7 +103,8 @@ class DownloadService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val pending = ArrayDeque<Task>()
     private val active = linkedMapOf<String, Pair<Task, DownloadControl>>()
-    private val resumeRequested = linkedSetOf<String>()\n    private var maxParallel = 3
+    private val resumeRequested = linkedSetOf<String>()
+    private var maxParallel = 3
     private var foregroundStarted = false
     private var currentTitle = "Study material"
     private var lastProgressAt = 0L
@@ -128,7 +137,27 @@ class DownloadService : Service() {
                 mutableState.value = mutableState.value.copy(paused = false, status = "Downloading \${active.size} files")
                 updateNotification()
             }
-            ACTION_SET_LIMIT -> {\n                maxParallel = command.getIntExtra(EXTRA_LIMIT, 3).coerceIn(1, 5)\n                getSharedPreferences("download_manager_settings", MODE_PRIVATE).edit().putInt("parallel_limit", maxParallel).apply()\n                pumpQueue(); refreshQueueState("Parallel downloads: $maxParallel")\n            }\n            ACTION_MOVE -> {\n                val id = command.getStringExtra(EXTRA_CONTROL_KEY).orEmpty()\n                val direction = command.getStringExtra(EXTRA_MOVE).orEmpty()\n                val list = pending.toMutableList(); val index = list.indexOfFirst { it.id == id }\n                if (index >= 0) {\n                    val target = when (direction) { "top" -> 0; "up" -> (index - 1).coerceAtLeast(0); "down" -> (index + 1).coerceAtMost(list.lastIndex); "bottom" -> list.lastIndex; else -> index }\n                    val task = list.removeAt(index); list.add(target, task); pending.clear(); list.forEach { pending.addLast(it) }\n                }\n                refreshQueueState("Queue order updated")\n            }\n            ACTION_REMOVE_QUEUED -> {\n                val id = command.getStringExtra(EXTRA_CONTROL_KEY).orEmpty()\n                val remaining = pending.filterNot { it.id == id }; pending.clear(); remaining.forEach { pending.addLast(it) }\n                refreshQueueState("Removed from queue")\n            }\n            ACTION_PAUSE_ITEM -> {
+            ACTION_SET_LIMIT -> {
+                maxParallel = command.getIntExtra(EXTRA_LIMIT, 3).coerceIn(1, 5)
+                getSharedPreferences("download_manager_settings", MODE_PRIVATE).edit().putInt("parallel_limit", maxParallel).apply()
+                pumpQueue(); refreshQueueState("Parallel downloads: $maxParallel")
+            }
+            ACTION_MOVE -> {
+                val id = command.getStringExtra(EXTRA_CONTROL_KEY).orEmpty()
+                val direction = command.getStringExtra(EXTRA_MOVE).orEmpty()
+                val list = pending.toMutableList(); val index = list.indexOfFirst { it.id == id }
+                if (index >= 0) {
+                    val target = when (direction) { "top" -> 0; "up" -> (index - 1).coerceAtLeast(0); "down" -> (index + 1).coerceAtMost(list.lastIndex); "bottom" -> list.lastIndex; else -> index }
+                    val task = list.removeAt(index); list.add(target, task); pending.clear(); list.forEach { pending.addLast(it) }
+                }
+                refreshQueueState("Queue order updated")
+            }
+            ACTION_REMOVE_QUEUED -> {
+                val id = command.getStringExtra(EXTRA_CONTROL_KEY).orEmpty()
+                val remaining = pending.filterNot { it.id == id }; pending.clear(); remaining.forEach { pending.addLast(it) }
+                refreshQueueState("Removed from queue")
+            }
+            ACTION_PAUSE_ITEM -> {
                 val key = command.getStringExtra(EXTRA_CONTROL_KEY).orEmpty()
                 active[key]?.second?.paused = true
                 pumpQueue()
