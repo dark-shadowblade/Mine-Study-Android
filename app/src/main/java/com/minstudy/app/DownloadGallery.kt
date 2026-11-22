@@ -409,10 +409,10 @@ fun DownloadGallery(
         }
     }
     if (confirmDelete.isNotEmpty()) {
-        val deleting = if (confirmDelete == "all") records else selectedRecords
+        val deleting = if (confirmDelete == "all") visible else selectedRecords
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmDelete = "" },
-            title = { androidx.compose.material3.Text(if (confirmDelete == "all") "Delete all downloads?" else "Delete selected downloads?") },
+            title = { androidx.compose.material3.Text(if (confirmDelete == "all") "Delete all ${selected.lowercase()}?" else "Delete selected downloads?") },
             text = { androidx.compose.material3.Text("This will permanently delete ${deleting.size} file(s) from this device. This action cannot be undone.") },
             confirmButton = {
                 androidx.compose.material3.TextButton(
