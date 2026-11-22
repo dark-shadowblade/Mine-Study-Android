@@ -30,6 +30,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 data class DownloadRecord(
     val uri: String,
@@ -115,7 +116,12 @@ object DownloadRepository {
             val output = resolver.openOutputStream(uri, "w") ?: throw IllegalStateException("Could not open download file")
             output.use { out ->
                 if (isVideo) {
-                    val temp = java.io.File(context.cacheDir, "mine-study-${System.currentTimeMillis()}.part")
+                    val identity = itemKey.ifBlank { sourceUrl } + "|" + Uri.parse(sourceUrl).encodedPath.orEmpty()
+                    val stableName = MessageDigest.getInstance("SHA-256")
+                        .digest(identity.toByteArray(Charsets.UTF_8))
+                        .joinToString("") { "%02x".format(it) }
+                    val resumeDir = java.io.File(context.noBackupFilesDir, "download-resume").apply { mkdirs() }
+                    val temp = java.io.File(resumeDir, "$stableName.mp4.part")
                     try {
                         ParallelCdnDownloader.download(sourceUrl, temp, control) { received, total ->
                             written = received
@@ -131,9 +137,13 @@ object DownloadRepository {
                             }
                         }
                         onProgress(written, written)
-                    } finally {
-                        temp.delete()
+                    } catch (error: Exception) {
+                        if (control.cancelled) ParallelCdnDownloader.clearCheckpoint(temp)
+                        throw error
                     }
+                    // Keep the completed checkpoint until MediaStore has been finalized below.
+                    // A process death during the copy can therefore retry the copy without
+                    // downloading the CDN ranges again.
                 } else {
                     val connection = (URL(sourceUrl).openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
@@ -165,6 +175,14 @@ object DownloadRepository {
             }
             val record = DownloadRecord(uri.toString(), fileName, category, mime, written, itemKey)
             save(context, record)
+            if (isVideo) {
+                val identity = itemKey.ifBlank { sourceUrl } + "|" + Uri.parse(sourceUrl).encodedPath.orEmpty()
+                val stableName = MessageDigest.getInstance("SHA-256")
+                    .digest(identity.toByteArray(Charsets.UTF_8))
+                    .joinToString("") { "%02x".format(it) }
+                val temp = java.io.File(java.io.File(context.noBackupFilesDir, "download-resume"), "$stableName.mp4.part")
+                ParallelCdnDownloader.clearCheckpoint(temp)
+            }
             record
         } catch (error: Exception) {
             resolver.delete(uri, null, null)
