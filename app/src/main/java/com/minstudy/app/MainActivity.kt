@@ -250,6 +250,12 @@ private fun MineStudyApp() {
     val context = LocalContext.current
     val api = remember { StudyApi(context) }
     val scope = rememberCoroutineScope()
+    val progressPrefs = remember { context.getSharedPreferences("mine_study_progress", Context.MODE_PRIVATE) }
+    var lastSubjectId by remember { mutableStateOf(progressPrefs.getString("subject_id", "").orEmpty()) }
+    var lastSubjectTitle by remember { mutableStateOf(progressPrefs.getString("subject_title", "").orEmpty()) }
+    var lastChapterId by remember { mutableStateOf(progressPrefs.getString("chapter_id", "").orEmpty()) }
+    var lastChapterTitle by remember { mutableStateOf(progressPrefs.getString("chapter_title", "").orEmpty()) }
+    var lastProgressBatch by remember { mutableStateOf(progressPrefs.getString("batch_id", "").orEmpty()) }
     var apiKey by remember { mutableStateOf(api.apiKey) }
     var batch by remember { mutableStateOf(api.batchId) }
     var screen by remember { mutableStateOf("home") }
@@ -347,6 +353,19 @@ private fun MineStudyApp() {
         }
     }
     fun loadContents(chapter: StudyItem, contentType: String = type) {
+        selectedChapter = chapter
+        lastChapterId = chapter.id
+        lastChapterTitle = chapter.title
+        lastSubjectId = selectedSubject?.id.orEmpty()
+        lastSubjectTitle = selectedSubject?.title.orEmpty()
+        lastProgressBatch = api.batchId
+        progressPrefs.edit()
+            .putString("subject_id", lastSubjectId)
+            .putString("subject_title", lastSubjectTitle)
+            .putString("chapter_id", lastChapterId)
+            .putString("chapter_title", lastChapterTitle)
+            .putString("batch_id", lastProgressBatch)
+            .apply()
         if (selectedChapter?.id == chapter.id && type == contentType && contents.isNotEmpty()) {
             screen = "contents"
             return
@@ -440,6 +459,29 @@ private fun MineStudyApp() {
         }
     }
 
+    fun resumeLastChapter() {
+        if (lastSubjectId.isBlank() || lastChapterId.isBlank() || lastProgressBatch != api.batchId) return
+        busy = true
+        error = ""
+        scope.launch {
+            try {
+                val subject = subjects.firstOrNull { it.id == lastSubjectId }
+                    ?: StudyItem(lastSubjectId, lastSubjectTitle.ifBlank { "Last subject" }, "", JSONObject())
+                selectedSubject = subject
+                val chapterPayload = api.get("/batch/${api.batchId}/subject/${enc(subject.id)}/chapter")
+                chapters = api.list(chapterPayload, "chapters")
+                val chapter = chapters.firstOrNull { it.id == lastChapterId }
+                    ?: StudyItem(lastChapterId, lastChapterTitle.ifBlank { "Last chapter" }, "", JSONObject())
+                selectedChapter = chapter
+                val contentPath = "/batch/${api.batchId}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type=${enc(type)}"
+                contents = api.list(api.get(contentPath), "contents")
+                screen = "contents"
+            } catch (e: Exception) {
+                error = e.message ?: "Could not resume your last chapter"
+            } finally { busy = false }
+        }
+    }
+
     fun goBack() {
         screen = when (screen) {
             "player" -> "contents"
@@ -500,6 +542,23 @@ private fun MineStudyApp() {
                                 }
                             }
                         } else {
+                            if (lastSubjectId.isNotBlank() && lastChapterId.isNotBlank() && lastProgressBatch == api.batchId) {
+                                Card(
+                                    Modifier.fillMaxWidth().padding(bottom = 10.dp).clickable { resumeLastChapter() },
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)),
+                                    shape = RoundedCornerShape(14.dp)
+                                ) {
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.PlayArrow, null, tint = Color(0xFF71D6C5))
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Continue learning", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                                            Text("${lastSubjectTitle} · ${lastChapterTitle}", maxLines = 1, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        Icon(Icons.Default.ArrowForward, "Continue", tint = Color(0xFFB5A9FF))
+                                    }
+                                }
+                            }
                             ItemList(
                                 " ", subjects, busy, error,
                                 actionLabel = "Open",
