@@ -85,6 +85,8 @@ import com.google.android.exoplayer2.ui.PlayerView
 import com.google.android.exoplayer2.upstream.DataSpec
 import com.google.android.exoplayer2.upstream.DefaultDataSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -325,6 +327,8 @@ private fun MineStudyApp() {
         progressPrefs.edit().putStringSet("starred_subjects_$batch", updated.toSet()).apply()
     }
     var chapters by remember { mutableStateOf(emptyList<StudyItem>()) }
+    var loadedChaptersBatch by remember { mutableStateOf("") }
+    var loadedChaptersSubjectId by remember { mutableStateOf("") }
     var contents by remember { mutableStateOf(emptyList<StudyItem>()) }
     var loadedContentsBatch by remember { mutableStateOf("") }
     var loadedContentsSubjectId by remember { mutableStateOf("") }
@@ -333,6 +337,7 @@ private fun MineStudyApp() {
     var contentRequestToken by remember { mutableIntStateOf(0) }
     var lectureResources by remember { mutableStateOf(emptyList<LectureResource>()) }
     var resourcesLoading by remember { mutableStateOf(false) }
+    var resourceRequestToken by remember { mutableIntStateOf(0) }
     var selectedSubject by remember { mutableStateOf<StudyItem?>(null) }
     var selectedChapter by remember { mutableStateOf<StudyItem?>(null) }
     var currentVideo by remember { mutableStateOf("") }
@@ -423,14 +428,19 @@ private fun MineStudyApp() {
     }
 
     fun loadChapters(subject: StudyItem) {
-        if (selectedSubject?.id == subject.id && chapters.isNotEmpty()) {
+        val requestedBatch = api.batchId
+        if (selectedSubject?.id == subject.id && loadedChaptersSubjectId == subject.id &&
+            loadedChaptersBatch == requestedBatch && chapters.isNotEmpty()) {
             screen = "chapters"
             return
         }
         contentRequestToken++
+        resourceRequestToken++
         selectedSubject = subject
         selectedChapter = null
         chapters = emptyList()
+        loadedChaptersBatch = ""
+        loadedChaptersSubjectId = ""
         contents = emptyList()
         loadedContentsBatch = ""
         loadedContentsSubjectId = ""
@@ -442,15 +452,17 @@ private fun MineStudyApp() {
         error = ""
         scope.launch {
             try {
-                val result = api.list(api.get("/batch/${api.batchId}/subject/${enc(subject.id)}/chapter"), "chapters")
-                if (selectedSubject?.id == subject.id) {
+                val result = api.list(api.get("/batch/${requestedBatch}/subject/${enc(subject.id)}/chapter"), "chapters")
+                if (selectedSubject?.id == subject.id && api.batchId == requestedBatch) {
                     chapters = result
+                    loadedChaptersBatch = requestedBatch
+                    loadedChaptersSubjectId = subject.id
                     screen = "chapters"
                 }
             } catch (e: Exception) {
-                if (selectedSubject?.id == subject.id) error = e.message ?: "Could not load chapters"
+                if (selectedSubject?.id == subject.id && api.batchId == requestedBatch) error = e.message ?: "Could not load chapters"
             } finally {
-                if (selectedSubject?.id == subject.id) busy = false
+                if (selectedSubject?.id == subject.id && api.batchId == requestedBatch) busy = false
             }
         }
     }
@@ -556,24 +568,37 @@ private fun MineStudyApp() {
     fun loadLectureResources(lecture: StudyItem) {
         val chapter = selectedChapter ?: return
         val subject = selectedSubject ?: return
+        val requestedBatch = api.batchId
+        val requestToken = ++resourceRequestToken
         lectureResources = emptyList()
         resourcesLoading = true
         scope.launch {
             try {
-                val base = "/batch/${api.batchId}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type="
-                val noteItems = api.list(api.get(base + "notes"), "contents")
-                val dppItems = api.list(api.get(base + "DppNotes"), "contents")
-                val lectureNo = lectureNumber(lecture.title)
-                lectureResources = if (lectureNo == null) emptyList() else {
-                    noteItems.filter { resourceMatchesLecture(it.title, lectureNo) }
-                        .map { LectureResource(it, false) } +
-                    dppItems.filter { resourceMatchesLecture(it.title, lectureNo) }
-                        .map { LectureResource(it, true) }
+                // Notes and DPP are independent endpoints; fetch them together
+                // so opening a lecture waits for one network round-trip, not two.
+                val (noteItems, dppItems) = coroutineScope {
+                    val notes = async {
+                        api.list(api.get("/batch/${requestedBatch}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type=notes"), "contents")
+                    }
+                    val dpp = async {
+                        api.list(api.get("/batch/${requestedBatch}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type=DppNotes"), "contents")
+                    }
+                    notes.await() to dpp.await()
+                }
+                if (requestToken == resourceRequestToken && selectedSubject?.id == subject.id &&
+                    selectedChapter?.id == chapter.id && api.batchId == requestedBatch) {
+                    val lectureNo = lectureNumber(lecture.title)
+                    lectureResources = if (lectureNo == null) emptyList() else {
+                        noteItems.filter { resourceMatchesLecture(it.title, lectureNo) }
+                            .map { LectureResource(it, false) } +
+                        dppItems.filter { resourceMatchesLecture(it.title, lectureNo) }
+                            .map { LectureResource(it, true) }
+                    }
                 }
             } catch (_: Exception) {
-                lectureResources = emptyList()
+                if (requestToken == resourceRequestToken) lectureResources = emptyList()
             } finally {
-                resourcesLoading = false
+                if (requestToken == resourceRequestToken) resourcesLoading = false
             }
         }
     }
