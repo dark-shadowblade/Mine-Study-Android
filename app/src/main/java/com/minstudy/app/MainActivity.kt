@@ -597,8 +597,7 @@ private fun MineStudyApp() {
                             listOf("videos" to "Lectures", "notes" to "Notes", "DppNotes" to "DPP", "DppVideos" to "DPP videos").forEach { (key, label) ->
                                 FilterChip(selected = type == key, onClick = { selectedChapter?.let { loadContents(it, key) } }, label = { Text(label, fontSize = 11.sp) })
                             }
-                        }                        ItemList(
-                            "Learning material", contents, busy, error,
+                        }                        ItemList(                            "Learning material", contents, busy, error,
                             showThumbnails = true,
                             actionLabel = if (type == "videos" || type == "DppVideos") "Play" else "Open PDF",
                             downloadCategory = when (type) {
@@ -612,9 +611,9 @@ private fun MineStudyApp() {
                             activeDownloadTitle = if (downloadState.active) downloadState.title else pendingDownloadTitle,
                             activeDownloadCategory = if (downloadState.active) downloadState.category else pendingDownloadCategory,
                             activeDownloadKey = if (downloadState.active) downloadState.itemKey else pendingDownloadKey,
-                            downloadItemKey = { item -> "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}" },
+                            downloadItemKey = { item: StudyItem -> "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}" },
                             activeDownloadPercent = if (downloadState.active && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
-                            onDownload = { item ->
+                            onDownload = { item: StudyItem ->
                                 val video = type == "videos" || type == "DppVideos"
                                 val category = when (type) {
                                     "videos" -> "Lectures"
@@ -632,7 +631,7 @@ private fun MineStudyApp() {
                                     } else item.raw.optString("baseUrl").takeIf { it.startsWith("http", true) }
                                 }
                             },
-                            onSelect = { item ->
+                            onSelect = { item: StudyItem ->
                                 if (type == "videos" || type == "DppVideos") {
                                     playLecture(contents.indexOfFirst { it.id == item.id })
                                 } else {
@@ -655,7 +654,9 @@ private fun MineStudyApp() {
                                         if (url != null) openExternal(context, url) else error = "No document link found for this item."
                                     }
                                 }
-                            }, onRetry = { selectedChapter?.let { loadContents(it) } })
+                            },
+                            onRetry = { selectedChapter?.let { chapter -> loadContents(chapter) } }
+                        )
                     }
                     "player" -> VideoScreen(
                         currentTitle,
@@ -1197,8 +1198,7 @@ private fun VideoScreen(
                             isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879))
                             else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFFB8BEC9))
                         }
-                    }
-                }
+                    }                }
                 SpeedPicker()
                 IconButton(onClick = {                    controlsLocked = true
                     showControls = false
