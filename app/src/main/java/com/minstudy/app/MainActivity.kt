@@ -870,16 +870,19 @@ private fun MineStudyApp() {
 
     fun batchMatches(info: BatchInfo, query: String): Boolean {
         if (query.isBlank()) return true
-        val searchable = "${info.name} ${info.language} ${info.className} ${info.id}"
-            .lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
-        val normalizedQuery = query.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+        // Keep Unicode letters so Hindi batch names can be searched too.
+        val searchable = "\${info.name} \${info.language} \${info.className} \${info.id}"
+            .lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+        val normalizedQuery = query.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
         if (searchable.contains(normalizedQuery)) return true
         val queryTokens = normalizedQuery.split(Regex("\\s+")).filter { it.isNotBlank() }
         val nameTokens = searchable.split(Regex("\\s+")).filter { it.isNotBlank() }
         return queryTokens.all { token ->
             nameTokens.any { candidate ->
-                candidate.contains(token) || token.contains(candidate) ||
-                    (token.length >= 6 && candidate.length >= 6 &&
+                candidate == token || candidate.startsWith(token) || token.startsWith(candidate) ||
+                    (token.length >= 5 && candidate.length >= 5 &&
+                        batchEditDistance(token, candidate) <= if (token.length >= 8) 2 else 1) ||
+                    (token.length >= 7 && candidate.length >= 7 &&
                         batchEditDistance(token, candidate) <= 2)
             }
         }
@@ -890,22 +893,24 @@ private fun MineStudyApp() {
             batchSearchError = "Add and verify your API key in Settings first."
             return
         }
+        if (batchSearchLoading) return
         scope.launch {
             batchSearchLoading = true
             batchSearchError = ""
             try {
                 val query = batchSearchText.trim()
                 val found = mutableListOf<BatchInfo>()
-                var scanPage = page
+                var scanPage = page.coerceAtLeast(1)
                 var lastScannedPage = page - 1
-                var totalPages = batchSearchTotalPages
+                var totalPages = batchSearchTotalPages.coerceAtLeast(1)
                 var scanned = 0
-                // The upstream endpoint may ignore its keyword parameter. Filter every
-                // returned page locally and scan ahead so unrelated batches never appear.
-                while (scanPage <= totalPages && scanned < if (query.isBlank()) 1 else 10) {
-                    val (pageResults, pages) = api.searchBatches(scanPage, query)
-                    totalPages = pages
-                    found += if (query.isBlank()) pageResults else pageResults.filter { batchMatches(it, query) }
+                // The API ignores keyword, so filter locally and scan a larger page window.
+                val pageBudget = if (query.isBlank()) 1 else 50
+                while (scanPage <= totalPages && scanned < pageBudget) {
+                    val (pageResults, pages) = api.searchBatches(scanPage, "")
+                    totalPages = pages.coerceAtLeast(1)
+                    val matches = if (query.isBlank()) pageResults else pageResults.filter { batchMatches(it, query) }
+                    found += matches
                     lastScannedPage = scanPage
                     scanned++
                     if (query.isBlank() || found.size >= 20) break
@@ -921,7 +926,6 @@ private fun MineStudyApp() {
             } finally { batchSearchLoading = false }
         }
     }
-
     fun goBack() {
         screen = when (screen) {
             "player" -> "contents"
@@ -1180,7 +1184,7 @@ private fun MineStudyApp() {
                             if (batchSearchExecuted && batchSearchPage < batchSearchTotalPages) {
                                 item {
                                     OutlinedButton(onClick = { searchBatches(batchSearchPage + 1) }, enabled = !batchSearchLoading, modifier = Modifier.fillMaxWidth()) {
-                                        Text("Search next pages · ${batchSearchPage + 1} of $batchSearchTotalPages")
+                                        Text("Search more · pages ${batchSearchPage + 1}–${minOf(batchSearchPage + 50, batchSearchTotalPages)} of $batchSearchTotalPages")
                                     }
                                 }
                             }
