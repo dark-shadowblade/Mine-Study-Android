@@ -747,7 +747,7 @@ private fun MineStudyApp() {
                         currentTitle,
                         currentVideo,
                         playbackKey = contents.getOrNull(currentItemIndex)?.id ?: currentVideo,
-                        hasPrevious = currentItemIndex < contents.lastIndex,
+                        hasPrevious = currentItemIndex >= 0 && currentItemIndex < contents.lastIndex,
                         hasNext = currentItemIndex > 0,
                         onPrevious = { playLecture(currentItemIndex + 1) },
                         onNext = { playLecture(currentItemIndex - 1) },
