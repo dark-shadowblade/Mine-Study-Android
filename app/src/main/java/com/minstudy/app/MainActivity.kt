@@ -800,6 +800,7 @@ private fun MineStudyApp() {
                         onMove = { id, direction -> DownloadService.moveQueued(context, id, direction) },
                         onRemove = { DownloadService.removeQueued(context, it) },
                         onCancelAll = { DownloadService.cancel(context) },
+                        onClearQueue = { DownloadService.clearQueue(context) },
                         onOpenGallery = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }
                     )
                     "downloads" -> DownloadGallery(
