@@ -166,7 +166,6 @@ object ParallelCdnDownloader {
                     checkpoint.advance(index, cursor)
                     progress(checkpoint.completedBytes(), total)
                 }
-                completedCount.incrementAndGet()
             }
 
             coroutineScope {
