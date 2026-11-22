@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -494,6 +495,7 @@ private fun MineStudyApp() {
                             downloadRecords = downloadRecords,
                             activeDownloadTitle = if (downloadState.active) downloadState.title else pendingDownloadTitle,
                             activeDownloadCategory = if (downloadState.active) downloadState.category else pendingDownloadCategory,
+                            activeDownloadPercent = if (downloadState.active && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
                             onDownload = { item ->
                                 val video = type == "videos" || type == "DppVideos"
                                 val category = when (type) {
@@ -701,6 +703,7 @@ private fun ItemList(
     downloadRecords: List<DownloadRecord> = emptyList(),
     activeDownloadTitle: String = "",
     activeDownloadCategory: String = "",
+    activeDownloadPercent: Int = 0,
     onDownload: ((StudyItem) -> Unit)? = null,
     onSelect: (StudyItem) -> Unit, onRetry: () -> Unit
 ) {
@@ -758,7 +761,10 @@ private fun ItemList(
                                 modifier = Modifier.size(44.dp)
                             ) {
                                 when {
-                                    downloading -> CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.4.dp, color = Color(0xFFB5A9FF))
+                                    downloading -> Box(contentAlignment = Alignment.Center, modifier = Modifier.size(34.dp)) {
+                                        CircularProgressIndicator(modifier = Modifier.size(25.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
+                                        Text("$activeDownloadPercent%", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                    }
                                     downloaded -> Icon(Icons.Default.CheckCircle, contentDescription = "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(25.dp))
                                     else -> Icon(Icons.Default.Download, contentDescription = "Download", tint = Color(0xFF858B98), modifier = Modifier.size(25.dp))
                                 }
@@ -944,7 +950,7 @@ private fun VideoScreen(
                 onValueChangeFinished = { player.seekTo(positionMs); isScrubbing = false },
                 valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
                 enabled = durationMs > 0L,
-                modifier = Modifier.fillMaxWidth().height(if (compact) 16.dp else 20.dp)
+                modifier = Modifier.fillMaxWidth().height(18.dp).graphicsLayer { scaleY = 0.28f }
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(formatTime(positionMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
@@ -1040,15 +1046,8 @@ private fun VideoScreen(
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (buffering) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Color.White)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Buffering…", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                    }
-                }
                 SeekBar(compact = true)
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     Icon(Icons.Default.VolumeUp, null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Slider(
                         value = volume.toFloat(),
@@ -1057,9 +1056,8 @@ private fun VideoScreen(
                             audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
                         },
                         valueRange = 0f..maxVolume.toFloat(),
-                        modifier = Modifier.weight(1f).height(16.dp)
+                        modifier = Modifier.width(132.dp).height(18.dp).graphicsLayer { scaleY = 0.28f }
                     )
-                    Text(if (volume == 0) "Muted" else "Volume", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -1096,6 +1094,12 @@ private fun VideoScreen(
                 update = { it.player = player },
                 modifier = Modifier.fillMaxSize()
             )
+            if (buffering && playerError.isBlank()) {
+                Column(Modifier.align(Alignment.Center).background(Color(0x99000000), RoundedCornerShape(14.dp)).padding(horizontal = 18.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 2.5.dp, color = Color.White)
+                    Text("Buffering…", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                }
+            }
             if (controlsLocked) {
                 Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
                     .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 9.dp))
@@ -1126,6 +1130,12 @@ private fun VideoScreen(
                     update = { it.player = player },
                     modifier = Modifier.fillMaxSize()
                 )
+            if (buffering && playerError.isBlank()) {
+                Column(Modifier.align(Alignment.Center).background(Color(0x99000000), RoundedCornerShape(14.dp)).padding(horizontal = 18.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 2.5.dp, color = Color.White)
+                    Text("Buffering…", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                }
+            }
                 if (controlsLocked) {
                     Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
                         .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 8.dp))
