@@ -871,7 +871,7 @@ private fun MineStudyApp() {
     fun batchMatches(info: BatchInfo, query: String): Boolean {
         if (query.isBlank()) return true
         // Keep Unicode letters so Hindi batch names can be searched too.
-        val searchable = "\${info.name} \${info.language} \${info.className} \${info.id}"
+        val searchable = "${info.name} ${info.language} ${info.className} ${info.id}"
             .lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
         val normalizedQuery = query.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
         if (searchable.contains(normalizedQuery)) return true
