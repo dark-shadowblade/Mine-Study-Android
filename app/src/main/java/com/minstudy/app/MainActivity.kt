@@ -342,6 +342,8 @@ private fun MineStudyApp() {
             .getStringSet("saved_batch_ids", emptySet())?.toSet() ?: emptySet()) + api.batchId)
     }
     var batchSearchText by remember { mutableStateOf("") }
+    var manualBatchId by remember { mutableStateOf("") }
+    var showHomeBatchMenu by remember { mutableStateOf(false) }
     var batchSearchResults by remember { mutableStateOf(emptyList<BatchInfo>()) }
     var batchSearchLoading by remember { mutableStateOf(false) }
     var batchSearchError by remember { mutableStateOf("") }
@@ -740,6 +742,20 @@ private fun MineStudyApp() {
             .apply()
     }
 
+    fun addManualBatch() {
+        val id = manualBatchId.trim()
+        if (id.isBlank()) return
+        if (!id.matches(Regex("[A-Za-z0-9_-]{8,64}"))) {
+            batchSearchError = "Enter a valid batch ID (8–64 letters or numbers)."
+            return
+        }
+        val existing = savedBatchInfo[id] ?: BatchInfo(id, "Manual batch")
+        saveBatchInfo(existing)
+        manualBatchId = ""
+        batchSearchError = ""
+        Toast.makeText(context, "Batch added to My batches", Toast.LENGTH_SHORT).show()
+    }
+
     fun openBatch(info: BatchInfo) {
         scope.launch {
             busy = true
@@ -921,6 +937,58 @@ private fun MineStudyApp() {
                                 }
                             }
                         } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("CURRENT BATCH", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
+                                    Text(
+                                        savedBatchInfo[batch]?.name ?: "Selected batch",
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                Box {
+                                    OutlinedButton(
+                                        onClick = { showHomeBatchMenu = true },
+                                        enabled = !busy,
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text("Switch", fontSize = 12.sp)
+                                        Icon(Icons.Default.ArrowForward, null, modifier = Modifier.size(15.dp))
+                                    }
+                                    DropdownMenu(
+                                        expanded = showHomeBatchMenu,
+                                        onDismissRequest = { showHomeBatchMenu = false }
+                                    ) {
+                                        savedBatchIds.sortedBy { savedBatchInfo[it]?.name ?: it }.forEach { id ->
+                                            val info = savedBatchInfo[id] ?: BatchInfo(id, "Saved batch")
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Column {
+                                                        Text(info.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        Text(id, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                                    }
+                                                },
+                                                trailingIcon = {
+                                                    if (id == batch) Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF71D6C5))
+                                                },
+                                                onClick = {
+                                                    showHomeBatchMenu = false
+                                                    if (id != batch) openBatch(info)
+                                                }
+                                            )
+                                        }
+                                        DropdownMenuItem(
+                                            text = { Text("Manage batches") },
+                                            leadingIcon = { Icon(Icons.Default.FolderOpen, null) },
+                                            onClick = { showHomeBatchMenu = false; screen = "my_batches" }
+                                        )
+                                    }
+                                }
+                            }
                             if (lastSubjectId.isNotBlank() && lastChapterId.isNotBlank() && lastProgressBatch == api.batchId) {
                                 Card(
                                     Modifier.fillMaxWidth().padding(bottom = 10.dp).clickable { resumeLastChapter() },
@@ -1000,6 +1068,21 @@ private fun MineStudyApp() {
                         Text("My batches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text("Your saved study batches", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = manualBatchId,
+                            onValueChange = { manualBatchId = it; batchSearchError = "" },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Add batch manually") },
+                            placeholder = { Text("Paste batch ID") },
+                            trailingIcon = {
+                                IconButton(onClick = { addManualBatch() }, enabled = manualBatchId.isNotBlank()) {
+                                    Icon(Icons.Default.Add, contentDescription = "Add batch ID")
+                                }
+                            }
+                        )
+                        Text("Add a batch ID directly if it is missing from All batches. You can check/open it after saving.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                        if (batchSearchError.isNotBlank()) Text(batchSearchError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
                             items(savedBatchIds.sorted(), key = { it }) { id ->
                                 val info = savedBatchInfo[id] ?: BatchInfo(id, "Saved batch")
