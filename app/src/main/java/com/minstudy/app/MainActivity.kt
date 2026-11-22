@@ -53,6 +53,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -540,6 +542,7 @@ private fun MineStudyApp() {
                     "player" -> VideoScreen(
                         currentTitle,
                         currentVideo,
+                        playbackKey = contents.getOrNull(currentItemIndex)?.id ?: currentVideo,
                         hasPrevious = currentItemIndex < contents.lastIndex,
                         hasNext = currentItemIndex > 0,
                         onPrevious = { playLecture(currentItemIndex + 1) },
@@ -711,15 +714,32 @@ private fun ItemList(
     activeDownloadPercent: Int = 0,
     onDownload: ((StudyItem) -> Unit)? = null,
     onSelect: (StudyItem) -> Unit, onRetry: () -> Unit
-) {
+ ) {
+    var searchQuery by remember(heading) { mutableStateOf("") }
+    val searchable = heading == "Chapters" || showThumbnails
+    val visibleItems = remember(items, searchQuery) { if (searchQuery.isBlank()) items else items.filter { it.title.contains(searchQuery.trim(), ignoreCase = true) } }
     Text(heading, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    if (searchable) {
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = searchQuery, onValueChange = { searchQuery = it },
+            modifier = Modifier.fillMaxWidth(), singleLine = true,
+            placeholder = { Text(if (showThumbnails) "Search lectures…" else "Search chapters…") },
+            textStyle = MaterialTheme.typography.bodyMedium,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                focusedContainerColor = Color(0xFF101521), unfocusedContainerColor = Color(0xFF101521),
+                focusedBorderColor = Color(0xFF9B8CFF), unfocusedBorderColor = Color(0xFF343D50)
+            )
+        )
+    }
     Spacer(Modifier.height(8.dp))
-    if (!busy && items.isEmpty() && error.isBlank()) {
+    if (!busy && visibleItems.isEmpty() && error.isBlank()) {
         Text("Nothing here yet. Check your API key or try refreshing.", color = Color.Gray)
         TextButton(onClick = onRetry) { Icon(Icons.Default.Refresh, null); Text("Refresh") }
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-        items(items, key = { it.id }) { item ->
+        items(visibleItems, key = { it.id }) { item ->
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { onSelect(item) },
                 shape = RoundedCornerShape(17.dp),
@@ -823,6 +843,7 @@ private fun DownloadStatusPanel(
 private fun VideoScreen(
     title: String,
     url: String,
+    playbackKey: String,
     hasPrevious: Boolean,
     hasNext: Boolean,
     onPrevious: () -> Unit,
@@ -835,6 +856,8 @@ private fun VideoScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val playbackPrefs = remember { context.getSharedPreferences("mine_study_playback", Context.MODE_PRIVATE) }
+    val savedPositionKey = remember(playbackKey) { "position_$playbackKey" }
     var fullScreen by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
     var controlsLocked by remember { mutableStateOf(false) }
@@ -852,7 +875,7 @@ private fun VideoScreen(
     val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
     var volume by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
 
-    val player = remember(url) {
+    val player = remember(url, playbackKey) {
         val mediaUri = Uri.parse(url)
         val sourceFactory = if (mediaUri.scheme == "content" || mediaUri.scheme == "file") {
             DefaultDataSource.Factory(context)
@@ -885,17 +908,27 @@ private fun VideoScreen(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
+            if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) playbackPrefs.edit().remove(savedPositionKey).apply()
+            else if (player.currentPosition > 0L) playbackPrefs.edit().putLong(savedPositionKey, player.currentPosition).apply()
             player.release()
         }
     }
 
-    LaunchedEffect(player) {
+    LaunchedEffect(player, savedPositionKey) {
+        while (player.playbackState == com.google.android.exoplayer2.Player.STATE_IDLE || player.playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING) delay(150)
+        if (player.playbackState == com.google.android.exoplayer2.Player.STATE_READY) {
+            val saved = playbackPrefs.getLong(savedPositionKey, 0L)
+            val duration = player.duration
+            if (saved > 5_000L && (duration <= 0L || duration == com.google.android.exoplayer2.C.TIME_UNSET || saved < duration - 5_000L)) player.seekTo(saved)
+        }
         while (true) {
+            delay(1_000)
+            if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) playbackPrefs.edit().remove(savedPositionKey).apply()
+            else if (!isScrubbing && player.playbackState == com.google.android.exoplayer2.Player.STATE_READY && player.currentPosition > 0L) playbackPrefs.edit().putLong(savedPositionKey, player.currentPosition).apply()
             if (!isScrubbing) positionMs = player.currentPosition.coerceAtLeast(0L)
             durationMs = player.duration.takeIf { it > 0L && it != com.google.android.exoplayer2.C.TIME_UNSET } ?: 0L
             isPlaying = player.isPlaying
             buffering = player.playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING
-            delay(350)
         }
     }
 
@@ -1090,9 +1123,18 @@ private fun VideoScreen(
     }
 
     if (fullScreen) {
-        Box(Modifier.fillMaxSize().background(Color.Black).clickable {
-            if (controlsLocked) { controlsLocked = false; showControls = true }
-            else showControls = !showControls
+        Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(player, controlsLocked) {
+            detectTapGestures(
+                onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
+                onDoubleTap = { offset ->
+                    if (!controlsLocked) {
+                        val delta = if (offset.x < size.width / 2f) -10_000L else 10_000L
+                        val end = durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE
+                        player.seekTo((player.currentPosition + delta).coerceIn(0L, end))
+                        showControls = true
+                    }
+                }
+            )
         }) {
             AndroidView(
                 factory = { PlayerView(it).apply { this.player = player; useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER); keepScreenOn = true } },
@@ -1124,9 +1166,18 @@ private fun VideoScreen(
             }
             Box(
                 Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)).background(Color.Black)
-                    .clickable {
-                        if (controlsLocked) { controlsLocked = false; showControls = true }
-                        else showControls = !showControls
+                    .pointerInput(player, controlsLocked) {
+                        detectTapGestures(
+                            onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
+                            onDoubleTap = { offset ->
+                                if (!controlsLocked) {
+                                    val delta = if (offset.x < size.width / 2f) -10_000L else 10_000L
+                                    val end = durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                    player.seekTo((player.currentPosition + delta).coerceIn(0L, end))
+                                    showControls = true
+                                }
+                            }
+                        )
                     }
             ) {
                 AndroidView(
