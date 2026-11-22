@@ -101,6 +101,7 @@ import java.net.URLEncoder
 private const val API = "https://v1.sgmvv1.xyz/api/v1"
 private const val BATCH_ONE = "6a0eb0a7f33c042849418636"
 private const val BATCH_TWO = "6a0eaf70f4ae45d1901b7196"
+private val DEFAULT_BATCH_IDS = setOf(BATCH_ONE, BATCH_TWO)
 
 data class StudyItem(val id: String, val title: String, val subtitle: String = "", val raw: JSONObject = JSONObject())
 data class LectureResource(val item: StudyItem, val isDpp: Boolean)
@@ -315,6 +316,12 @@ private fun MineStudyApp() {
     var lastProgressBatch by remember { mutableStateOf(progressPrefs.getString("batch_id", "").orEmpty()) }
     var apiKey by remember { mutableStateOf(api.apiKey) }
     var batch by remember { mutableStateOf(api.batchId) }
+    var savedBatchIds by remember {
+        mutableStateOf((context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
+            .getStringSet("saved_batch_ids", DEFAULT_BATCH_IDS)?.toSet() ?: DEFAULT_BATCH_IDS) + api.batchId)
+    }
+    var newBatchId by remember { mutableStateOf("") }
+    var addingBatch by remember { mutableStateOf(false) }
     var screen by remember { mutableStateOf("home") }
     var type by remember { mutableStateOf("videos") }
     var subjects by remember { mutableStateOf(emptyList<StudyItem>()) }
@@ -984,18 +991,115 @@ private fun MineStudyApp() {
                     Modifier.fillMaxWidth().heightIn(max = 350.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("SERVER", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        SegmentedButton(
-                            selected = batch == BATCH_ONE,
-                            onClick = { batch = BATCH_ONE; api.batchId = BATCH_ONE },
-                            shape = SegmentedButtonDefaults.itemShape(0, 2)
-                        ) { Text("Server 1") }
-                        SegmentedButton(
-                            selected = batch == BATCH_TWO,
-                            onClick = { batch = BATCH_TWO; api.batchId = BATCH_TWO },
-                            shape = SegmentedButtonDefaults.itemShape(1, 2)
-                        ) { Text("Server 2") }
+                    Text("BATCHES", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        savedBatchIds.sorted().forEach { batchId ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        if (batch != batchId) {
+                                            batch = batchId
+                                            api.batchId = batchId
+                                            selectedSubject = null
+                                            selectedChapter = null
+                                            chapters = emptyList()
+                                            contents = emptyList()
+                                            lectureResources = emptyList()
+                                            loadedChaptersBatch = ""
+                                            loadedContentsBatch = ""
+                                            loadSubjects()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    border = BorderStroke(1.dp, if (batch == batchId) Color(0xFF9B8CFF) else Color(0xFF343D50))
+                                ) {
+                                    Text(
+                                        batchId,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (batch == batchId) Color(0xFFC5BAFF) else Color.White,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                                if (batch == batchId) {
+                                    Icon(Icons.Default.CheckCircle, "Selected batch", tint = Color(0xFF71D6C5), modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = { addingBatch = !addingBatch; newBatchId = ""; keyStatus = "" },
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (addingBatch) "Close add batch" else "Add batch")
+                        }
+                        if (addingBatch) {
+                            OutlinedTextField(
+                                value = newBatchId,
+                                onValueChange = { newBatchId = it; keyStatus = "" },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text("Batch ID") },
+                                placeholder = { Text("Paste batch ID") },
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    cursorColor = Color(0xFFB5A9FF),
+                                    focusedBorderColor = Color(0xFF9B8CFF),
+                                    unfocusedBorderColor = Color(0xFF343D50),
+                                    focusedContainerColor = Color(0xFF101521),
+                                    unfocusedContainerColor = Color(0xFF101521)
+                                )
+                            )
+                            Button(
+                                onClick = {
+                                    val candidate = newBatchId.trim()
+                                    if (candidate.isBlank() || candidate.any { it.isWhitespace() }) {
+                                        keyStatus = "Enter a valid batch ID without spaces."
+                                    } else if (candidate in savedBatchIds) {
+                                        keyStatus = "This batch is already saved."
+                                    } else {
+                                        scope.launch {
+                                            val previousBatch = api.batchId
+                                            keyStatus = "Checking batch..."
+                                            try {
+                                                val foundSubjects = api.list(api.get("/batch/$candidate/subject"), "subjects")
+                                                savedBatchIds = savedBatchIds + candidate
+                                                context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
+                                                    .edit().putStringSet("saved_batch_ids", savedBatchIds.toSet()).apply()
+                                                batch = candidate
+                                                api.batchId = candidate
+                                                subjects = foundSubjects
+                                                selectedSubject = null
+                                                selectedChapter = null
+                                                chapters = emptyList()
+                                                contents = emptyList()
+                                                lectureResources = emptyList()
+                                                loadedChaptersBatch = ""
+                                                loadedContentsBatch = ""
+                                                addingBatch = false
+                                                newBatchId = ""
+                                                keyStatus = "Batch saved · ${foundSubjects.size} subjects found"
+                                            } catch (e: Exception) {
+                                                api.batchId = previousBatch
+                                                keyStatus = e.message ?: "Could not load this batch. Check the ID and API key."
+                                            }
+                                        }
+                                    }
+                                },
+                                enabled = newBatchId.isNotBlank() && apiKey.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+                            ) { Text("Save batch") }
+                        }
                     }
                     HorizontalDivider(color = Color(0xFF303747))
                     Text("API KEY", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
