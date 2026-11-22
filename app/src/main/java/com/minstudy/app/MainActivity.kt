@@ -326,6 +326,11 @@ private fun MineStudyApp() {
     }
     var chapters by remember { mutableStateOf(emptyList<StudyItem>()) }
     var contents by remember { mutableStateOf(emptyList<StudyItem>()) }
+    var loadedContentsBatch by remember { mutableStateOf("") }
+    var loadedContentsSubjectId by remember { mutableStateOf("") }
+    var loadedContentsChapterId by remember { mutableStateOf("") }
+    var loadedContentsType by remember { mutableStateOf("") }
+    var contentRequestToken by remember { mutableIntStateOf(0) }
     var lectureResources by remember { mutableStateOf(emptyList<LectureResource>()) }
     var resourcesLoading by remember { mutableStateOf(false) }
     var selectedSubject by remember { mutableStateOf<StudyItem?>(null) }
@@ -422,22 +427,41 @@ private fun MineStudyApp() {
             screen = "chapters"
             return
         }
-        selectedSubject = subject; busy = true; error = ""
+        contentRequestToken++
+        selectedSubject = subject
+        selectedChapter = null
+        chapters = emptyList()
+        contents = emptyList()
+        loadedContentsBatch = ""
+        loadedContentsSubjectId = ""
+        loadedContentsChapterId = ""
+        loadedContentsType = ""
+        lectureResources = emptyList()
+        type = "videos"
+        busy = true
+        error = ""
         scope.launch {
             try {
-                chapters = api.list(api.get("/batch/${api.batchId}/subject/${enc(subject.id)}/chapter"), "chapters")
-                screen = "chapters"
-            } catch (e: Exception) { error = e.message ?: "Could not load chapters" }
-            finally { busy = false }
+                val result = api.list(api.get("/batch/${api.batchId}/subject/${enc(subject.id)}/chapter"), "chapters")
+                if (selectedSubject?.id == subject.id) {
+                    chapters = result
+                    screen = "chapters"
+                }
+            } catch (e: Exception) {
+                if (selectedSubject?.id == subject.id) error = e.message ?: "Could not load chapters"
+            } finally {
+                if (selectedSubject?.id == subject.id) busy = false
+            }
         }
     }
     fun loadContents(chapter: StudyItem, contentType: String = type) {
-        selectedChapter = chapter
+        val subject = selectedSubject ?: return
+        val requestedBatch = api.batchId
         lastChapterId = chapter.id
         lastChapterTitle = chapter.title
-        lastSubjectId = selectedSubject?.id.orEmpty()
-        lastSubjectTitle = selectedSubject?.title.orEmpty()
-        lastProgressBatch = api.batchId
+        lastSubjectId = subject.id
+        lastSubjectTitle = subject.title
+        lastProgressBatch = requestedBatch
         progressPrefs.edit()
             .putString("subject_id", lastSubjectId)
             .putString("subject_title", lastSubjectTitle)
@@ -445,18 +469,52 @@ private fun MineStudyApp() {
             .putString("chapter_title", lastChapterTitle)
             .putString("batch_id", lastProgressBatch)
             .apply()
-        if (selectedChapter?.id == chapter.id && type == contentType && contents.isNotEmpty()) {
+
+        val cacheMatches = loadedContentsBatch == requestedBatch &&
+            loadedContentsSubjectId == subject.id &&
+            loadedContentsChapterId == chapter.id &&
+            loadedContentsType == contentType &&
+            contents.isNotEmpty()
+        selectedChapter = chapter
+        type = contentType
+        if (cacheMatches) {
             screen = "contents"
+            error = ""
             return
         }
-        selectedChapter = chapter; type = contentType; busy = true; error = ""
+
+        contentRequestToken++
+        val requestToken = contentRequestToken
+        contents = emptyList()
+        loadedContentsBatch = ""
+        loadedContentsSubjectId = ""
+        loadedContentsChapterId = ""
+        loadedContentsType = ""
+        lectureResources = emptyList()
+        busy = true
+        error = ""
+        screen = "contents"
         scope.launch {
             try {
-                val path = "/batch/${api.batchId}/subject/${enc(selectedSubject!!.id)}/chapter/${enc(chapter.id)}/content?type=${enc(contentType)}"
-                contents = api.list(api.get(path), "contents")
-                screen = "contents"
-            } catch (e: Exception) { error = e.message ?: "Could not load lessons" }
-            finally { busy = false }
+                val path = "/batch/${requestedBatch}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type=${enc(contentType)}"
+                val result = api.list(api.get(path), "contents")
+                if (requestToken == contentRequestToken &&
+                    selectedSubject?.id == subject.id &&
+                    selectedChapter?.id == chapter.id &&
+                    api.batchId == requestedBatch &&
+                    type == contentType
+                ) {
+                    contents = result
+                    loadedContentsBatch = requestedBatch
+                    loadedContentsSubjectId = subject.id
+                    loadedContentsChapterId = chapter.id
+                    loadedContentsType = contentType
+                }
+            } catch (e: Exception) {
+                if (requestToken == contentRequestToken) error = e.message ?: "Could not load lessons"
+            } finally {
+                if (requestToken == contentRequestToken) busy = false
+            }
         }
     }
 
@@ -807,8 +865,15 @@ private fun MineStudyApp() {
                                     (currentItemIndex >= 0 && record.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}") ||
                                     (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(currentTitle.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim(), true)))
                         },
-                        downloadPercent = if (downloadState.active && downloadState.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}" && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
-                        isDownloading = (downloadState.active && downloadState.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}") || (pendingDownloadKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}"),
+                        downloadPercent = downloadState.queueItems.firstOrNull {
+                            it.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}" &&
+                                it.category == (if (type == "DppVideos") "DPP Videos" else "Lectures") &&
+                                it.active && it.total > 0L
+                        }?.let { ((it.bytes * 100L) / it.total).toInt().coerceIn(0, 99) } ?: 0,
+                        isDownloading = downloadState.queueItems.any {
+                            it.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}" &&
+                                it.category == (if (type == "DppVideos") "DPP Videos" else "Lectures")
+                        } || (pendingDownloadKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}"),
                         onDownload = {
                             val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
                             val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}"
