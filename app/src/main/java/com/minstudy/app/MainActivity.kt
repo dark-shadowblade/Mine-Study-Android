@@ -403,6 +403,8 @@ private fun MineStudyApp() {
     var batchSearchPage by remember { mutableIntStateOf(1) }
     var batchSearchTotalPages by remember { mutableIntStateOf(1) }
     var batchSearchExecuted by remember { mutableStateOf(false) }
+    var batchSearchGeneration by remember { mutableIntStateOf(0) }
+    var batchSearchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val batchListState = rememberLazyListState()
     var savedBatchInfo by remember {
         mutableStateOf<Map<String, BatchInfo>>(context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
@@ -897,8 +899,21 @@ private fun MineStudyApp() {
             batchSearchError = "Add and verify your API key in Settings first."
             return
         }
-        if (batchSearchLoading) return
-        scope.launch {
+
+        // Page one always starts a fresh search; invalidate old responses.
+        if (page == 1) {
+            batchSearchJob?.cancel()
+            batchSearchGeneration++
+            batchSearchResults = emptyList()
+            batchSearchPage = 1
+            batchSearchExecuted = false
+            batchSearchError = ""
+        } else if (batchSearchLoading) {
+            return
+        }
+
+        val generation = batchSearchGeneration
+        batchSearchJob = scope.launch {
             batchSearchLoading = true
             batchSearchError = ""
             try {
@@ -910,10 +925,9 @@ private fun MineStudyApp() {
                 var scanned = 0
                 var newMatches = 0
 
-                // Publish page one immediately; never make the user wait for a
-                // large local-search scan before the first results appear.
                 if (page == 1) {
                     val (firstPage, reportedPages) = api.searchBatches(1, "")
+                    if (generation != batchSearchGeneration) throw CancellationException()
                     totalPages = reportedPages.coerceAtLeast(1)
                     accumulated = if (query.isBlank()) firstPage else firstPage.filter { batchMatches(it, query) }
                     newMatches = accumulated.size
@@ -926,19 +940,18 @@ private fun MineStudyApp() {
                     batchSearchExecuted = true
                 }
 
-                // The server currently ignores its keyword parameter. Search locally,
-                // but publish each concurrent page group as soon as it completes.
-                // Blank searches fetch eight pages per load; text searches scan in
-                // eight-page groups, stopping as soon as enough matches are available.
+                // The API ignores keyword, so match locally. Two requests at
+                // a time reduce rate limiting; each load remains bounded.
                 val pageBudget = if (query.isBlank()) 8 else 50
                 while (nextPage <= totalPages && scanned < pageBudget &&
                     (query.isBlank() || newMatches < 20)) {
-                    val groupEnd = minOf(nextPage + 7, totalPages, page + pageBudget - 1)
+                    val groupEnd = minOf(nextPage + 1, totalPages, page + pageBudget - 1)
                     val pages = coroutineScope {
                         (nextPage..groupEnd).map { requestedPage ->
                             async { requestedPage to api.searchBatches(requestedPage, "") }
                         }.map { it.await() }.sortedBy { it.first }
                     }
+                    if (generation != batchSearchGeneration) throw CancellationException()
                     for ((requestedPage, response) in pages) {
                         val (pageResults, reportedPages) = response
                         totalPages = reportedPages.coerceAtLeast(1)
@@ -949,6 +962,7 @@ private fun MineStudyApp() {
                         lastScannedPage = requestedPage
                         scanned++
                     }
+                    if (generation != batchSearchGeneration) throw CancellationException()
                     batchSearchResults = accumulated
                     batchSearchPage = lastScannedPage.coerceAtLeast(page)
                     batchSearchTotalPages = totalPages
@@ -956,21 +970,31 @@ private fun MineStudyApp() {
                     nextPage = groupEnd + 1
                 }
 
-                batchSearchPage = lastScannedPage.coerceAtLeast(page)
-                batchSearchTotalPages = totalPages
-                batchSearchExecuted = true
+                if (generation == batchSearchGeneration) {
+                    batchSearchPage = lastScannedPage.coerceAtLeast(page)
+                    batchSearchTotalPages = totalPages
+                    batchSearchExecuted = true
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                batchSearchError = e.message ?: "Batch search failed"
-            } finally { batchSearchLoading = false }
+                if (generation == batchSearchGeneration) {
+                    batchSearchError = e.message ?: "Batch search failed"
+                }
+            } finally {
+                if (generation == batchSearchGeneration) batchSearchLoading = false
+            }
         }
     }
     LaunchedEffect(screen, batchSearchExecuted, batchSearchPage, batchSearchTotalPages, batchSearchLoading) {
         if (screen == "all_batches") {
             snapshotFlow {
                 val layout = batchListState.layoutInfo
-                (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
-            }.distinctUntilChanged().collect { (lastVisible, totalItems) ->
-                if (batchSearchExecuted && !batchSearchLoading && batchSearchPage < batchSearchTotalPages &&
+                Triple(layout.visibleItemsInfo.lastOrNull()?.index ?: -1, layout.totalItemsCount, layout.canScrollBackward)
+            }.distinctUntilChanged().collect { (lastVisible, totalItems, userHasScrolled) ->
+                // Prevent auto-draining all API pages when there are few/no matches.
+                if (batchSearchExecuted && !batchSearchLoading &&
+                    batchSearchPage < batchSearchTotalPages && userHasScrolled &&
                     totalItems > 0 && lastVisible >= totalItems - 3) {
                     searchBatches(batchSearchPage + 1)
                 }
@@ -1174,9 +1198,6 @@ private fun MineStudyApp() {
                             shape = RoundedCornerShape(14.dp),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             keyboardActions = KeyboardActions(onSearch = {
-                                batchSearchResults = emptyList()
-                                batchSearchPage = 1
-                                batchSearchExecuted = false
                                 scope.launch { batchListState.scrollToItem(0) }
                                 searchBatches(1)
                             }),
@@ -1184,11 +1205,9 @@ private fun MineStudyApp() {
                             placeholder = { Text("e.g. Prarambh 2027") },
                             trailingIcon = {
                                 IconButton(onClick = {
-                                    batchSearchResults = emptyList()
-                                    batchSearchPage = 1
-                                    batchSearchExecuted = false
+                                    scope.launch { batchListState.scrollToItem(0) }
                                     searchBatches(1)
-                                }, enabled = !batchSearchLoading) {
+                                }) {
                                     Icon(Icons.Default.Search, contentDescription = "Search batches")
                                 }
                             }
@@ -1205,7 +1224,7 @@ private fun MineStudyApp() {
                                 ) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(2f / 1f))
+                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(1.8f))
                                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                                 Text(info.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                 val details = listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
@@ -1280,7 +1299,7 @@ private fun MineStudyApp() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(18.dp)) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(2f / 1f))
+                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(1.8f))
                                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                                 Text(info.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                 if (info.language.isNotBlank() || info.className.isNotBlank()) {
