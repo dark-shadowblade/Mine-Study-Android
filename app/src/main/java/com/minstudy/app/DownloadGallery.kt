@@ -174,7 +174,7 @@ object DownloadRepository {
                         if (code !in 200..299) throw IllegalStateException("PDF download failed (HTTP $code)")
                         val total = connection.contentLengthLong
                         connection.inputStream.use { input ->
-                            val buffer = ByteArray(64 * 1024)
+                            val buffer = ByteArray(256 * 1024)
                             while (true) {
                                 control.checkpoint()
                                 val count = input.read(buffer)
