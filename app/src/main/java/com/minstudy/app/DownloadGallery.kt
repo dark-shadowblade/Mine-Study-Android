@@ -254,61 +254,6 @@ fun DownloadGallery(
                 androidx.compose.material3.Icon(Icons.Default.Refresh, contentDescription = "Refresh downloads")
             }
         }
-        if (status.isNotBlank()) {
-            androidx.compose.material3.Card(
-                Modifier.fillMaxWidth().padding(top = 10.dp),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
-                colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                androidx.compose.foundation.layout.Column(
-                    Modifier.fillMaxWidth().padding(13.dp),
-                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
-                ) {
-                    androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        androidx.compose.material3.Text(status, Modifier.weight(1f), fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 2)
-                        if (active) {
-                            androidx.compose.material3.IconButton(onClick = onCancel) {
-                                androidx.compose.material3.Icon(Icons.Default.Close, "Cancel", tint = androidx.compose.material3.MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    }
-                    if (active) {
-                        val progress = if (total > 0L) (bytes.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
-                        if (total > 0L) androidx.compose.material3.LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
-                        else androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        androidx.compose.material3.Text(
-                            if (total > 0L) "${bytes / (1024 * 1024)} / ${total / (1024 * 1024)} MB  •  ${(progress * 100).toInt()}%  •  ${speed / (1024 * 1024)} MB/s"
-                            else "${bytes / (1024 * 1024)} MB downloaded  •  ${speed / (1024 * 1024)} MB/s",
-                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    queueItems.forEach { item ->
-                        androidx.compose.foundation.layout.Row(
-                            Modifier.fillMaxWidth().padding(top = 3.dp),
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                        ) {
-                            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
-                                androidx.compose.material3.Text(item.title, maxLines = 1, style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
-                                androidx.compose.material3.Text(
-                                    if (item.paused) "Paused • slot available" else if (item.active) "Downloading" else "Queued",
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (item.active) {
-                                androidx.compose.material3.IconButton(onClick = { if (item.paused) onResumeItem(item.id) else onPauseItem(item.id) }) {
-                                    androidx.compose.material3.Icon(
-                                        if (item.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                        contentDescription = if (item.paused) "Resume this download" else "Pause this download"
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
         androidx.compose.foundation.lazy.LazyRow(
             modifier = Modifier.padding(top = 12.dp),
             horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(7.dp)
