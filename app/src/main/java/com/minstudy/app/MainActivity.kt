@@ -784,7 +784,10 @@ private fun MineStudyApp() {
                         bytes = downloadState.bytes,
                         total = downloadState.total,
                         speed = downloadState.speed,
-                        onTogglePause = { if (downloadState.paused) DownloadService.resume(context) else DownloadService.pause(context) },
+                        queueItems = downloadState.queueItems,
+                        onPauseItem = { DownloadService.pauseItem(context, it) },
+                        onResumeItem = { DownloadService.resumeItem(context, it) },
+                        onTogglePause = { },
                         onCancel = { DownloadService.cancel(context) },
                         onOpen = { record ->
                             if (record.mime.startsWith("video")) {
