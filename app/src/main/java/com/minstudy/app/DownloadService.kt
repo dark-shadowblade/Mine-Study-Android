@@ -22,6 +22,8 @@ import kotlinx.coroutines.launch
 import java.util.ArrayDeque
 import kotlin.math.max
 
+data class DownloadQueueEntry(val id: String, val title: String, val category: String, val active: Boolean, val paused: Boolean)
+
 data class DownloadUiState(
     val status: String = "",
     val active: Boolean = false,
@@ -33,7 +35,8 @@ data class DownloadUiState(
     val category: String = "",
     val itemKey: String = "",
     val runningCount: Int = 0,
-    val queuedCount: Int = 0
+    val queuedCount: Int = 0,
+    val queueItems: List<DownloadQueueEntry> = emptyList()
 )
 
 class DownloadService : Service() {
@@ -44,6 +47,9 @@ class DownloadService : Service() {
         private const val ACTION_PAUSE = "com.minstudy.app.download.PAUSE"
         private const val ACTION_RESUME = "com.minstudy.app.download.RESUME"
         private const val ACTION_CANCEL = "com.minstudy.app.download.CANCEL"
+        private const val ACTION_PAUSE_ITEM = "com.minstudy.app.download.PAUSE_ITEM"
+        private const val ACTION_RESUME_ITEM = "com.minstudy.app.download.RESUME_ITEM"
+        private const val EXTRA_CONTROL_KEY = "control_key"
         private const val EXTRA_URL = "url"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_CATEGORY = "category"
@@ -66,6 +72,11 @@ class DownloadService : Service() {
         fun pause(context: Context) = command(context, ACTION_PAUSE)
         fun resume(context: Context) = command(context, ACTION_RESUME)
         fun cancel(context: Context) = command(context, ACTION_CANCEL)
+        fun pauseItem(context: Context, key: String) = itemCommand(context, ACTION_PAUSE_ITEM, key)
+        fun resumeItem(context: Context, key: String) = itemCommand(context, ACTION_RESUME_ITEM, key)
+        private fun itemCommand(context: Context, action: String, key: String) {
+            context.startService(Intent(context, DownloadService::class.java).setAction(action).putExtra(EXTRA_CONTROL_KEY, key))
+        }
         private fun command(context: Context, action: String) {
             context.startService(Intent(context, DownloadService::class.java).setAction(action))
         }
@@ -82,6 +93,7 @@ class DownloadService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val pending = ArrayDeque<Task>()
     private val active = linkedMapOf<String, Pair<Task, DownloadControl>>()
+    private val resumeRequested = linkedSetOf<String>()
     private var foregroundStarted = false
     private var currentTitle = "Study material"
     private var lastProgressAt = 0L
@@ -111,6 +123,18 @@ class DownloadService : Service() {
                 active.values.forEach { it.second.paused = false }
                 mutableState.value = mutableState.value.copy(paused = false, status = "Downloading \${active.size} files")
                 updateNotification()
+            }
+            ACTION_PAUSE_ITEM -> {
+                val key = command.getStringExtra(EXTRA_CONTROL_KEY).orEmpty()
+                active[key]?.second?.paused = true
+                pumpQueue()
+                refreshQueueState("Paused • ${active[key]?.first?.title ?: "Download"}")
+            }
+            ACTION_RESUME_ITEM -> {
+                val key = command.getStringExtra(EXTRA_CONTROL_KEY).orEmpty()
+                if (active.containsKey(key)) resumeRequested.add(key)
+                pumpQueue()
+                refreshQueueState("Resume queued")
             }
             ACTION_CANCEL -> {
                 pending.clear()
@@ -205,7 +229,7 @@ class DownloadService : Service() {
 
     private fun refreshQueueState(message: String) {
         val previous = mutableState.value
-        val first = active.values.firstOrNull()?.first
+        val first = active.values.firstOrNull { !it.second.paused }?.first ?: active.values.firstOrNull()?.first
         mutableState.value = previous.copy(
             status = message,
             active = active.isNotEmpty() || pending.isNotEmpty(),
