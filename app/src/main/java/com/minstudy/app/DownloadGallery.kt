@@ -412,8 +412,9 @@ fun DownloadGallery(
                             androidx.compose.material3.Checkbox(
                                 checked = isSelected,
                                 onCheckedChange = { checked ->
-                                    selectionMode = checked || selectedUris.isNotEmpty()
-                                    selectedUris = if (checked) selectedUris + record.uri else selectedUris - record.uri
+                                    val updatedSelection = if (checked) selectedUris + record.uri else selectedUris - record.uri
+                                    selectedUris = updatedSelection
+                                    selectionMode = updatedSelection.isNotEmpty()
                                 }
                             )
                             androidx.compose.material3.Surface(
