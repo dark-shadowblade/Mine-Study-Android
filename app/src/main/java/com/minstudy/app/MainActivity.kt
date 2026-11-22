@@ -729,6 +729,7 @@ private fun MineStudyApp() {
                             downloadItemKey = { item: StudyItem -> "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}" },
                             activeDownloadPercent = if (downloadState.active && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
                             downloadingKeys = pendingDownloadKeys + downloadState.queueItems.map { it.itemKey }.filter { it.isNotBlank() }.toSet(),
+                            downloadQueueItems = downloadState.queueItems,
                             onDownload = { item: StudyItem ->
                                 val video = type == "videos" || type == "DppVideos"
                                 val category = when (type) {
@@ -995,6 +996,7 @@ private fun ItemList(
     downloadItemKey: (StudyItem) -> String = { it.id },
     activeDownloadPercent: Int = 0,
     downloadingKeys: Set<String> = emptySet(),
+    downloadQueueItems: List<DownloadQueueEntry> = emptyList(),
     onDownload: ((StudyItem) -> Unit)? = null,
     showSubjectStars: Boolean = false,
     starredSubjectIds: Set<String> = emptySet(),
@@ -1081,7 +1083,11 @@ private fun ItemList(
                                 record.category == downloadCategory && (record.itemKey == itemKey ||
                                     (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)))
                             }
+                            val queueEntry = downloadQueueItems.firstOrNull { it.itemKey == itemKey && it.category == downloadCategory }
                             val downloading = itemKey in downloadingKeys || (activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory)
+                            val itemPercent = queueEntry?.takeIf { it.total > 0L }?.let {
+                                ((it.bytes * 100L) / it.total).toInt().coerceIn(0, 99)
+                            } ?: if (activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory) activeDownloadPercent else 0
                             IconButton(
                                 onClick = { if (!downloaded && !downloading) onDownload(item) },
                                 enabled = !downloaded && !downloading,
@@ -1090,7 +1096,7 @@ private fun ItemList(
                                 when {
                                     downloading -> Box(contentAlignment = Alignment.Center, modifier = Modifier.size(34.dp)) {
                                         CircularProgressIndicator(modifier = Modifier.size(25.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
-                                        Text("$activeDownloadPercent%", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                        Text("${if (queueEntry?.active == false) "Q" else "$itemPercent%"}", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                                     }
                                     downloaded -> Icon(Icons.Default.CheckCircle, contentDescription = "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(25.dp))
                                     else -> Icon(Icons.Default.Download, contentDescription = "Download", tint = Color(0xFF858B98), modifier = Modifier.size(25.dp))
