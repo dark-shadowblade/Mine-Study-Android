@@ -136,7 +136,7 @@ class DownloadService : Service() {
             }
             ACTION_RESUME -> {
                 active.values.forEach { it.second.paused = false }
-                mutableState.value = mutableState.value.copy(paused = false, status = "Downloading \${active.size} files")
+                mutableState.value = mutableState.value.copy(paused = false, status = "Downloading ${active.size} files")
                 updateNotification()
             }
             ACTION_SET_LIMIT -> {
@@ -206,7 +206,7 @@ class DownloadService : Service() {
             foregroundStarted = true
         }
         pumpQueue()
-        refreshQueueState("Queued \${task.title}")
+        refreshQueueState("Queued ${task.title}")
     }
 
     private fun pumpQueue() {
@@ -236,7 +236,7 @@ class DownloadService : Service() {
         currentTitle = task.title
         lastProgressAt = System.currentTimeMillis()
         lastProgressBytes = 0L
-        refreshQueueState("Downloading • \${task.title}")
+        refreshQueueState("Downloading • ${task.title}")
         try {
             val record = DownloadRepository.download(
                 this@DownloadService, task.url, task.title, task.category, task.video, task.itemKey, taskControl
@@ -245,7 +245,7 @@ class DownloadService : Service() {
                 val elapsed = (now - lastProgressAt).coerceAtLeast(1L)
                 val speed = if (elapsed >= 700L) ((bytes - lastProgressBytes) * 1000L / elapsed).coerceAtLeast(0L) else mutableState.value.speed
                 mutableState.value = mutableState.value.copy(
-                    status = "Downloading • \${task.title}",
+                    status = "Downloading • ${task.title}",
                     active = true,
                     bytes = bytes,
                     total = total,
@@ -260,11 +260,11 @@ class DownloadService : Service() {
                     updateNotification()
                 }
             }
-            refreshQueueState("Completed • \${record.name}")
+            refreshQueueState("Completed • ${record.name}")
         } catch (e: CancellationException) {
-            refreshQueueState("Cancelled • \${task.title}")
+            refreshQueueState("Cancelled • ${task.title}")
         } catch (e: Exception) {
-            refreshQueueState("Failed • \${task.title}: \${e.message ?: "Network error"}")
+            refreshQueueState("Failed • ${task.title}: ${e.message ?: "Network error"}")
         } finally {
             active.remove(id)
             resumeRequested.remove(id)
@@ -276,7 +276,7 @@ class DownloadService : Service() {
                 foregroundStarted = false
                 stopSelf()
             } else {
-                refreshQueueState("Downloading \${active.size} • Queued \${pending.size}")
+                refreshQueueState("Downloading ${active.size} • Queued ${pending.size}")
             }
         }
     }
