@@ -1218,8 +1218,7 @@ private fun VideoScreen(
     }
 
     LaunchedEffect(buffering) {
-        if (buffering) { delay(180); bufferingVisible = true }
-        else bufferingVisible = false
+        bufferingVisible = buffering
     }
 
     LaunchedEffect(gestureActive, gestureLabel, gestureValue) {
@@ -1375,7 +1374,7 @@ private fun VideoScreen(
                     }
                     Spacer(Modifier.width(22.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        if (bufferingVisible && playerError.isBlank()) {
+                        if (buffering && playerError.isBlank()) {
                             CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp, color = Color.White)
                         } else FilledIconButton(
                             onClick = {
@@ -1401,7 +1400,7 @@ private fun VideoScreen(
                     }
                     Spacer(Modifier.width(16.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        if (bufferingVisible && playerError.isBlank()) {
+                        if (buffering && playerError.isBlank()) {
                             CircularProgressIndicator(Modifier.size(25.dp), strokeWidth = 2.5.dp, color = Color.White)
                         } else FilledIconButton(
                             onClick = {
