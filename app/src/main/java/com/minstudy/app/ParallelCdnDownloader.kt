@@ -244,7 +244,7 @@ object ParallelCdnDownloader {
                 }
                 val output = ByteArrayOutputStream((actualEnd - start + 1L).toInt())
                 conn.inputStream.use { input ->
-                    val buffer = ByteArray(64 * 1024)
+                    val buffer = ByteArray(256 * 1024)
                     while (true) {
                         val amount = input.read(buffer)
                         if (amount < 0) break
