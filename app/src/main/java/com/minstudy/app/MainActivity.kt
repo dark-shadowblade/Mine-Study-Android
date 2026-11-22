@@ -824,6 +824,7 @@ private fun MineStudyApp() {
                         onPause = { DownloadService.pauseItem(context, it) },
                         onResume = { DownloadService.resumeItem(context, it) },
                         onCancelItem = { DownloadService.cancelItem(context, it) },
+                        onCancelItems = { ids -> ids.forEach { DownloadService.cancelItem(context, it) } },
                         onMove = { id, direction -> DownloadService.moveQueued(context, id, direction) },
                         onRemove = { DownloadService.removeQueued(context, it) },
                         onCancelAll = { DownloadService.cancel(context) },
