@@ -1160,6 +1160,7 @@ private fun MineStudyApp() {
                                 batchSearchResults = emptyList()
                                 batchSearchPage = 1
                                 batchSearchExecuted = false
+                                scope.launch { batchListState.scrollToItem(0) }
                                 searchBatches(1)
                             }),
                             label = { Text("Search UPSC batches") },
@@ -1262,7 +1263,7 @@ private fun MineStudyApp() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(18.dp)) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BatchThumbnail(info.thumbnail, Modifier.size(width = 112.dp, height = 82.dp))
+                                            BatchThumbnail(info.thumbnail, Modifier.width(104.dp).aspectRatio(1.42f))
                                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                                 Text(info.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                 if (info.language.isNotBlank() || info.className.isNotBlank()) {
