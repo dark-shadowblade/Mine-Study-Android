@@ -782,6 +782,11 @@ private fun MineStudyApp() {
                                 Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
                             }
                         },
+                        onDelete = { record ->
+                            DownloadRepository.delete(context, record)
+                            downloadRecords = DownloadRepository.list(context)
+                            Toast.makeText(context, "Download deleted", Toast.LENGTH_SHORT).show()
+                        },
                         onRefresh = { downloadRecords = DownloadRepository.list(context) }
                     )
                 }
