@@ -20,6 +20,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.upstream.DataSpec
 import kotlinx.coroutines.Dispatchers
@@ -216,40 +218,46 @@ fun DownloadGallery(
     onTogglePause: () -> Unit,
     onCancel: () -> Unit,
     onOpen: (DownloadRecord) -> Unit,
-    onDelete: (DownloadRecord) -> Unit,
+    onDelete: (List<DownloadRecord>) -> Unit,
     onRefresh: () -> Unit
 ) {
-    var selected by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("All") }
-    val categories = listOf("All", "Lectures", "Notes", "DPP", "DPP Videos")
+    var selected by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("Lectures") }
+    var selectedUris by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(setOf<String>()) }
+    var confirmDelete by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    val categories = listOf("Lectures", "Notes", "DPP", "DPP Videos", "All")
     val visible = if (selected == "All") records else records.filter { it.category == selected }
+    val selectedRecords = visible.filter { it.uri in selectedUris }
+    val totalStored = records.sumOf { it.bytes }
     androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
         androidx.compose.foundation.layout.Row(
-            modifier = Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth(),
             horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
         ) {
-            androidx.compose.material3.Text("Downloads", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-            androidx.compose.material3.TextButton(onClick = onRefresh) { androidx.compose.material3.Text("Refresh") }
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                androidx.compose.material3.Text("Download Manager", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                androidx.compose.material3.Text(
+                    "${records.size} files  •  ${formatDownloadBytes(totalStored)} used",
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall
+                )
+            }
+            androidx.compose.material3.IconButton(onClick = onRefresh) {
+                androidx.compose.material3.Icon(Icons.Default.Refresh, contentDescription = "Refresh downloads")
+            }
         }
-        val totalStored = records.sumOf { it.bytes }
-        androidx.compose.material3.Text(
-            "${records.size} files • ${formatDownloadBytes(totalStored)} stored",
-            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
         if (status.isNotBlank()) {
             androidx.compose.material3.Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+                Modifier.fillMaxWidth().padding(top = 10.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+                colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 androidx.compose.foundation.layout.Column(
-                    Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(9.dp)
+                    Modifier.fillMaxWidth().padding(13.dp),
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
                 ) {
                     androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        androidx.compose.material3.Text(status, modifier = Modifier.weight(1f), fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 2)
+                        androidx.compose.material3.Text(status, Modifier.weight(1f), fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 2)
                         if (active) {
                             androidx.compose.material3.IconButton(onClick = onTogglePause) {
                                 androidx.compose.material3.Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (paused) "Resume" else "Pause")
@@ -260,66 +268,238 @@ fun DownloadGallery(
                         }
                     }
                     if (active) {
-                        if (total > 0L) {
-                            val progress = (bytes.toFloat() / total.toFloat()).coerceIn(0f, 1f)
-                            androidx.compose.material3.LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
-                            androidx.compose.material3.Text(
-                                "${bytes / (1024 * 1024)} MB / ${total / (1024 * 1024)} MB  •  ${(progress * 100).toInt()}%  •  ${speed / (1024 * 1024)} MB/s",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            androidx.compose.material3.Text(
-                                "${bytes / (1024 * 1024)} MB downloaded  •  ${speed / (1024 * 1024)} MB/s",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        val progress = if (total > 0L) (bytes.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
+                        if (total > 0L) androidx.compose.material3.LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
+                        else androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        androidx.compose.material3.Text(
+                            if (total > 0L) "${bytes / (1024 * 1024)} / ${total / (1024 * 1024)} MB  •  ${(progress * 100).toInt()}%  •  ${speed / (1024 * 1024)} MB/s"
+                            else "${bytes / (1024 * 1024)} MB downloaded  •  ${speed / (1024 * 1024)} MB/s",
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+        androidx.compose.foundation.lazy.LazyRow(
+            modifier = Modifier.padding(top = 12.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(7.dp)
+        ) {
+            items(categories) { category ->
+                androidx.compose.material3.FilterChip(
+                    selected = selected == category,
+                    onClick = { selected = category; selectedUris = emptySet() },
+                    label = { androidx.compose.material3.Text(category) }
+                )
+            }
+        }
+        if (visible.isNotEmpty()) {
+            androidx.compose.foundation.layout.Row(
+                Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 5.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                androidx.compose.material3.Text(
+                    "${visible.size} ${if (visible.size == 1) "download" else "downloads"}",
+                    modifier = Modifier.weight(1f),
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium
+                )
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        selectedUris = if (selectedUris.size == visible.size) emptySet() else visible.map { it.uri }.toSet()
+                    }
+                ) {
+                    androidx.compose.material3.Text(if (selectedUris.size == visible.size) "Deselect all" else "Select all")
+                }
+                androidx.compose.material3.TextButton(
+                    onClick = { confirmDelete = "all" },
+                    enabled = records.isNotEmpty()
+                ) {
+                    androidx.compose.material3.Text("Delete all", color = androidx.compose.material3.MaterialTheme.colorScheme.error)
+                }
+            }
+            if (selectedUris.isNotEmpty()) {
+                androidx.compose.material3.Surface(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 7.dp),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    androidx.compose.foundation.layout.Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.Text(
+                            "${selectedUris.size} selected",
+                            Modifier.weight(1f),
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelLarge
+                        )
+                        androidx.compose.material3.TextButton(onClick = { confirmDelete = "selected" }) {
+                            androidx.compose.material3.Text("Delete selected", color = androidx.compose.material3.MaterialTheme.colorScheme.error)
                         }
                     }
                 }
             }
         }
-        androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
-            items(categories) { category ->
-                androidx.compose.material3.FilterChip(
-                    selected = selected == category,
-                    onClick = { selected = category },
-                    label = { androidx.compose.material3.Text(category) }
-                )
-            }
-        }
         if (visible.isEmpty()) {
-            androidx.compose.foundation.layout.Spacer(Modifier.height(24.dp))
-            androidx.compose.material3.Text("No downloads in this section yet.", color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            androidx.compose.foundation.layout.Box(
+                Modifier.fillMaxWidth().weight(1f),
+                contentAlignment = androidx.compose.ui.Alignment.Center
+            ) {
+                androidx.compose.foundation.layout.Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+                    androidx.compose.material3.Icon(Icons.Default.MenuBook, null, modifier = Modifier.size(38.dp), tint = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                    androidx.compose.material3.Text("No ${if (selected == "All") "downloads" else selected.lowercase()} yet", modifier = Modifier.padding(top = 8.dp), color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         } else {
-            androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+            ) {
                 items(visible, key = { it.uri }) { record ->
+                    val isSelected = record.uri in selectedUris
                     androidx.compose.material3.Card(
-                        modifier = Modifier.fillMaxWidth().clickable { onOpen(record) },
-                        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(
+                            containerColor = if (isSelected) androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer
+                            else androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant
+                        )
                     ) {
                         androidx.compose.foundation.layout.Row(
-                            Modifier.fillMaxWidth().padding(14.dp),
+                            Modifier.fillMaxWidth().clickable { onOpen(record) }.padding(start = 10.dp, end = 5.dp, top = 8.dp, bottom = 8.dp),
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                         ) {
-                            androidx.compose.material3.Icon(
-                                imageVector = if (record.mime.startsWith("video")) Icons.Default.PlayArrow else Icons.Default.MenuBook,
-                                contentDescription = null
+                            androidx.compose.material3.Checkbox(
+                                checked = isSelected,
+                                onCheckedChange = { checked ->
+                                    selectedUris = if (checked) selectedUris + record.uri else selectedUris - record.uri
+                                }
                             )
-                            androidx.compose.foundation.layout.Spacer(Modifier.width(12.dp))
-                            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
-                                androidx.compose.material3.Text(record.name, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 2)
-                                androidx.compose.material3.Text("${record.category} • ${record.bytes / (1024 * 1024)} MB", color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                            androidx.compose.material3.Surface(
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(11.dp),
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.surface,
+                                modifier = Modifier.size(42.dp)
+                            ) {
+                                androidx.compose.foundation.layout.Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                    androidx.compose.material3.Icon(
+                                        if (record.mime.startsWith("video")) Icons.Default.PlayArrow else Icons.Default.MenuBook,
+                                        null,
+                                        tint = androidx.compose.material3.MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            androidx.compose.foundation.layout.Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                                androidx.compose.material3.Text(record.name.substringBeforeLast('.'), fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 2, style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
+                                androidx.compose.material3.Text(
+                                    "${record.category}  •  ${formatDownloadBytes(record.bytes)}",
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall
+                                )
                             }
                             androidx.compose.material3.IconButton(onClick = { onOpen(record) }) {
-                                androidx.compose.material3.Icon(Icons.Default.ArrowForward, contentDescription = "Open")
-                            }
-                            androidx.compose.material3.IconButton(onClick = { onDelete(record) }) {
-                                androidx.compose.material3.Icon(Icons.Default.Close, contentDescription = "Delete download",
-                                    tint = androidx.compose.material3.MaterialTheme.colorScheme.error)
+                                androidx.compose.material3.Icon(Icons.Default.ArrowForward, contentDescription = "Open in Mine Study")
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+    if (confirmDelete.isNotEmpty()) {
+        val deleting = if (confirmDelete == "all") records else selectedRecords
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDelete = "" },
+            title = { androidx.compose.material3.Text(if (confirmDelete == "all") "Delete all downloads?" else "Delete selected downloads?") },
+            text = { androidx.compose.material3.Text("This will permanently delete ${deleting.size} file(s) from this device. This action cannot be undone.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        onDelete(deleting)
+                        selectedUris = emptySet()
+                        confirmDelete = ""
+                    },
+                    enabled = deleting.isNotEmpty()
+                ) { androidx.compose.material3.Text("Delete", color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmDelete = "" }) { androidx.compose.material3.Text("Cancel") }
+            }
+        )
+    }
+}
+
+@androidx.compose.runtime.Composable
+fun PdfViewerScreen(uri: Uri, title: String, onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var pageCount by androidx.compose.runtime.remember(uri) { androidx.compose.runtime.mutableIntStateOf(0) }
+    var loadError by androidx.compose.runtime.remember(uri) { androidx.compose.runtime.mutableStateOf("") }
+    androidx.compose.runtime.LaunchedEffect(uri) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                    android.graphics.pdf.PdfRenderer(descriptor).use { renderer ->
+                        pageCount = renderer.pageCount
+                    }
+                } ?: throw IllegalStateException("Could not open this PDF")
+            }.onFailure { loadError = it.message ?: "Could not read PDF" }
+        }
+    }
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+        androidx.compose.foundation.layout.Row(
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 5.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            androidx.compose.material3.IconButton(onClick = onBack) {
+                androidx.compose.material3.Icon(Icons.Default.ArrowForward, contentDescription = "Back", modifier = Modifier.graphicsLayer { rotationY = 180f })
+            }
+            androidx.compose.material3.Text(title, Modifier.weight(1f), maxLines = 1, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+            androidx.compose.material3.Text(if (pageCount > 0) "$pageCount pages" else "", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        androidx.compose.material3.HorizontalDivider()
+        if (loadError.isNotBlank()) {
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                androidx.compose.material3.Text(loadError, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
+            }
+        } else if (pageCount == 0) {
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                androidx.compose.material3.CircularProgressIndicator()
+            }
+        } else {
+            androidx.compose.foundation.lazy.LazyColumn(
+                Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF252A35)),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(9.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp)
+            ) {
+                items(pageCount) { pageIndex ->
+                    val bitmapState = androidx.compose.runtime.produceState<android.graphics.Bitmap?>(null, uri, pageIndex) {
+                        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            runCatching {
+                                context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                                    android.graphics.pdf.PdfRenderer(descriptor).use { renderer ->
+                                        renderer.openPage(pageIndex).use { page ->
+                                            val width = 1200
+                                            val height = (width.toFloat() * page.height / page.width).toInt().coerceAtLeast(1)
+                                            android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888).also { bitmap ->
+                                                bitmap.eraseColor(android.graphics.Color.WHITE)
+                                                page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                            }
+                                        }
+                                    }
+                                }
+                            }.getOrNull()
+                        }
+                    }
+                    val bitmap = bitmapState.value
+                    if (bitmap != null) {
+                        androidx.compose.foundation.Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "PDF page ${pageIndex + 1}",
+                            modifier = Modifier.fillMaxWidth(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.FillWidth
+                        )
+                    } else {
+                        androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
                     }
                 }
             }
