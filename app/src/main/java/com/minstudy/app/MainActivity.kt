@@ -106,8 +106,6 @@ import java.net.URLEncoder
 
 private const val API = "https://v1.sgmvv1.xyz/api/v1"
 private const val BATCH_ONE = "6a0eb0a7f33c042849418636"
-private const val BATCH_TWO = "6a0eaf70f4ae45d1901b7196"
-private val DEFAULT_BATCH_IDS = setOf(BATCH_ONE, BATCH_TWO)
 
 data class StudyItem(val id: String, val title: String, val subtitle: String = "", val raw: JSONObject = JSONObject())
 data class LectureResource(val item: StudyItem, val isDpp: Boolean)
@@ -209,7 +207,7 @@ private class StudyApi(private val context: Context) {
             val id = item.optString("_id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
             BatchInfo(id, item.optString("name", "Unnamed batch"), item.optString("lang", ""), item.optString("class", ""))
         }
-        return batches to payload.optJSONObject("pagination")?.optInt("totalPages", 1)?.coerceAtLeast(1) ?: 1
+        return batches to (payload.optJSONObject("pagination")?.optInt("totalPages", 1)?.coerceAtLeast(1) ?: 1)
     }
 
     suspend fun generateKeyLink(): String {
@@ -341,7 +339,7 @@ private fun MineStudyApp() {
     var batch by remember { mutableStateOf(api.batchId) }
     var savedBatchIds by remember {
         mutableStateOf((context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
-            .getStringSet("saved_batch_ids", DEFAULT_BATCH_IDS)?.toSet() ?: DEFAULT_BATCH_IDS) + api.batchId)
+            .getStringSet("saved_batch_ids", emptySet())?.toSet() ?: emptySet()) + api.batchId)
     }
     var batchSearchText by remember { mutableStateOf("") }
     var batchSearchResults by remember { mutableStateOf(emptyList<BatchInfo>()) }
