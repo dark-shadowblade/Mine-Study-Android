@@ -205,9 +205,20 @@ private class StudyApi(private val context: Context) {
 
     suspend fun verifyKey(candidate: String): Int {
         if (candidate.isBlank()) throw IllegalStateException("Enter an API key first")
+        val subjectPath = "/batch/$batchId/subject"
+
+        // A key may already be activated on the server even when app data has
+        // been cleared. Test it directly first so we don't try to activate it twice.
+        try {
+            val existingResponse = get(subjectPath, candidate)
+            return list(existingResponse, "subjects").size
+        } catch (_: Exception) {
+            // First-time keys still need activation before the batch API accepts them.
+        }
+
         activateKey(candidate)
-        val response = get("/batch/$batchId/subject", candidate)
-        return list(response, "subjects").size
+        val activatedResponse = get(subjectPath, candidate)
+        return list(activatedResponse, "subjects").size
     }
 
     fun findString(value: Any?, names: Set<String>): String? {
