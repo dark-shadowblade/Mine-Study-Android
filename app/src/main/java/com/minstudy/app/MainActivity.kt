@@ -1178,6 +1178,13 @@ private fun VideoScreen(
         else bufferingVisible = false
     }
 
+    LaunchedEffect(gestureActive, gestureLabel, gestureValue) {
+        if (gestureActive && gestureLabel == "Speed") {
+            delay(900)
+            gestureActive = false
+        }
+    }
+
     DisposableEffect(fullScreen) {
         val window = activity?.window
         if (fullScreen) {
@@ -1660,6 +1667,28 @@ private fun VideoScreen(
                         )
                     }
                     .pointerInput(player, controlsLocked) {
+                        var speedSwipeDistance = 0f
+                        detectTransformGestures { _, pan, _, _ ->
+                            if (!controlsLocked && kotlin.math.abs(pan.y) > 0.5f) {
+                                speedSwipeDistance += -pan.y
+                                while (speedSwipeDistance >= 28f) {
+                                    setSpeed(playbackSpeed + 0.05f)
+                                    speedSwipeDistance -= 28f
+                                    gestureLabel = "Speed"
+                                    gestureValue = String.format(java.util.Locale.US, "%.2f×", playbackSpeed)
+                                    gestureActive = true
+                                }
+                                while (speedSwipeDistance <= -28f) {
+                                    setSpeed(playbackSpeed - 0.05f)
+                                    speedSwipeDistance += 28f
+                                    gestureLabel = "Speed"
+                                    gestureValue = String.format(java.util.Locale.US, "%.2f×", playbackSpeed)
+                                    gestureActive = true
+                                }
+                            }
+                        }
+                    }
+                    .pointerInput(player, controlsLocked) {
                         detectTapGestures(
                             onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
                             onDoubleTap = { offset ->
@@ -1774,7 +1803,7 @@ private fun ResourceSection(
                 if (dpp.isNotEmpty()) {
                     item { Text("DPP", color = Color(0xFF71D6C5), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
                     items(dpp, key = { "dpp_${it.item.id}" }) { resource ->
-                        ResourceRow(resource, onOpen)
+                        ResourceRow(resource, onOpen, onDownload, downloadRecords, itemKey(resource), activeDownloadKey, activeDownloadCategory, downloadPercent)
                     }
                 }
             }
