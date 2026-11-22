@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -101,6 +102,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -400,6 +403,7 @@ private fun MineStudyApp() {
     var batchSearchPage by remember { mutableIntStateOf(1) }
     var batchSearchTotalPages by remember { mutableIntStateOf(1) }
     var batchSearchExecuted by remember { mutableStateOf(false) }
+    val batchListState = rememberLazyListState()
     var savedBatchInfo by remember {
         mutableStateOf<Map<String, BatchInfo>>(context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
             .getStringSet("saved_batch_info", emptySet<String>())?.mapNotNull { raw ->
@@ -904,17 +908,25 @@ private fun MineStudyApp() {
                 var lastScannedPage = page - 1
                 var totalPages = batchSearchTotalPages.coerceAtLeast(1)
                 var scanned = 0
-                // The API ignores keyword, so filter locally and scan a larger page window.
+                // Fetch pages concurrently in groups of eight. The API ignores keyword,
+                // so matching remains local while network latency is parallelized.
                 val pageBudget = if (query.isBlank()) 1 else 50
                 while (scanPage <= totalPages && scanned < pageBudget) {
-                    val (pageResults, pages) = api.searchBatches(scanPage, "")
-                    totalPages = pages.coerceAtLeast(1)
-                    val matches = if (query.isBlank()) pageResults else pageResults.filter { batchMatches(it, query) }
-                    found += matches
-                    lastScannedPage = scanPage
-                    scanned++
+                    val groupEnd = minOf(scanPage + 7, totalPages, page + pageBudget - 1)
+                    val pages = coroutineScope {
+                        (scanPage..groupEnd).map { requestedPage ->
+                            async { requestedPage to api.searchBatches(requestedPage, "") }
+                        }.map { it.await() }.sortedBy { it.first }
+                    }
+                    for ((requestedPage, response) in pages) {
+                        val (pageResults, reportedPages) = response
+                        totalPages = reportedPages.coerceAtLeast(1)
+                        found += if (query.isBlank()) pageResults else pageResults.filter { batchMatches(it, query) }
+                        lastScannedPage = requestedPage
+                        scanned++
+                    }
                     if (query.isBlank() || found.size >= 20) break
-                    scanPage++
+                    scanPage = groupEnd + 1
                 }
                 batchSearchResults = (if (page == 1) emptyList() else batchSearchResults) + found
                 batchSearchResults = batchSearchResults.distinctBy { it.id }
@@ -924,6 +936,19 @@ private fun MineStudyApp() {
             } catch (e: Exception) {
                 batchSearchError = e.message ?: "Batch search failed"
             } finally { batchSearchLoading = false }
+        }
+    }
+    LaunchedEffect(screen, batchSearchExecuted, batchSearchPage, batchSearchTotalPages, batchSearchLoading) {
+        if (screen == "all_batches") {
+            snapshotFlow {
+                val layout = batchListState.layoutInfo
+                (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
+            }.distinctUntilChanged().collect { (lastVisible, totalItems) ->
+                if (batchSearchExecuted && !batchSearchLoading && batchSearchPage < batchSearchTotalPages &&
+                    totalItems > 0 && lastVisible >= totalItems - 3) {
+                    searchBatches(batchSearchPage + 1)
+                }
+            }
         }
     }
     fun goBack() {
@@ -1053,15 +1078,18 @@ private fun MineStudyApp() {
                                     }
                                     DropdownMenu(
                                         expanded = showHomeBatchMenu,
-                                        onDismissRequest = { showHomeBatchMenu = false }
+                                        onDismissRequest = { showHomeBatchMenu = false },
+                                        modifier = Modifier.widthIn(min = 190.dp, max = 260.dp).heightIn(max = 360.dp).background(Color(0xFF171D2A))
                                     ) {
                                         savedBatchIds.sortedBy { savedBatchInfo[it]?.name ?: it }.forEach { id ->
                                             val info = savedBatchInfo[id] ?: BatchInfo(id, "Saved batch")
                                             DropdownMenuItem(
+                                                modifier = Modifier.height(54.dp),
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                                 text = {
-                                                    Column {
-                                                        Text(info.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                        Text(id, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                                        Text(info.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                                                        Text(id, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 1)
                                                     }
                                                 },
                                                 trailingIcon = {
@@ -1141,7 +1169,7 @@ private fun MineStudyApp() {
                         Spacer(Modifier.height(8.dp))
                         if (batchSearchError.isNotBlank()) Text(batchSearchError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
                         if (batchSearchLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
+                        LazyColumn(state = batchListState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
                             items(batchSearchResults, key = { it.id }) { info ->
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1150,7 +1178,7 @@ private fun MineStudyApp() {
                                 ) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BatchThumbnail(info.thumbnail, Modifier.size(width = 100.dp, height = 82.dp))
+                                            BatchThumbnail(info.thumbnail, Modifier.width(104.dp).aspectRatio(1.42f))
                                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                                 Text(info.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                 val details = listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
@@ -1181,11 +1209,11 @@ private fun MineStudyApp() {
                                     }
                                 }
                             }
-                            if (batchSearchExecuted && batchSearchPage < batchSearchTotalPages) {
-                                item {
-                                    OutlinedButton(onClick = { searchBatches(batchSearchPage + 1) }, enabled = !batchSearchLoading, modifier = Modifier.fillMaxWidth()) {
-                                        Text("Search more · pages ${batchSearchPage + 1}–${minOf(batchSearchPage + 50, batchSearchTotalPages)} of $batchSearchTotalPages")
-                                    }
+                            if (batchSearchLoading) item {
+                                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Loading more batches…", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                             if (batchSearchExecuted && batchSearchResults.isEmpty() && !batchSearchLoading) {
