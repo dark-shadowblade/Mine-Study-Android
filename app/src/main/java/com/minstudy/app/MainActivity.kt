@@ -109,7 +109,7 @@ private const val BATCH_ONE = "6a0eb0a7f33c042849418636"
 
 data class StudyItem(val id: String, val title: String, val subtitle: String = "", val raw: JSONObject = JSONObject())
 data class LectureResource(val item: StudyItem, val isDpp: Boolean)
-data class BatchInfo(val id: String, val name: String, val language: String = "", val className: String = "")
+data class BatchInfo(val id: String, val name: String, val language: String = "", val className: String = "", val thumbnail: String = "")
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,6 +117,17 @@ class MainActivity : ComponentActivity() {
         setContent { MineStudyApp() }
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4107)
+        }
+    }
+}
+
+@Composable
+private fun BatchThumbnail(url: String, modifier: Modifier = Modifier) {
+    Box(modifier.clip(RoundedCornerShape(10.dp)).background(Color(0xFF202638)), contentAlignment = Alignment.Center) {
+        if (url.isNotBlank()) {
+            AsyncImage(model = url, contentDescription = "Batch thumbnail", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        } else {
+            Icon(Icons.Default.MenuBook, contentDescription = null, tint = Color(0xFF9B8CFF), modifier = Modifier.size(28.dp))
         }
     }
 }
@@ -205,7 +216,17 @@ private class StudyApi(private val context: Context) {
         val batches = (0 until array.length()).mapNotNull { index ->
             val item = array.optJSONObject(index) ?: return@mapNotNull null
             val id = item.optString("_id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            BatchInfo(id, item.optString("name", "Unnamed batch"), item.optString("lang", ""), item.optString("class", ""))
+            val thumbnail = listOf("thumbnail", "thumbnailUrl", "image", "imageUrl", "coverImage", "cover", "banner", "bannerImage", "batchImage", "logo", "photo", "photoUrl", "cover_image", "thumbnail_url")
+                .firstNotNullOfOrNull { key ->
+                    when (val value = item.opt(key)) {
+                        is String -> value.takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) }
+                        is JSONObject -> listOf("url", "secure_url", "src", "link").firstNotNullOfOrNull { nested ->
+                            value.optString(nested).takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) }
+                        }
+                        else -> null
+                    }
+                }.orEmpty()
+            BatchInfo(id, item.optString("name", "Unnamed batch"), item.optString("lang", ""), item.optString("class", ""), thumbnail)
         }
         return batches to (payload.optJSONObject("pagination")?.optInt("totalPages", 1)?.coerceAtLeast(1) ?: 1)
     }
@@ -354,7 +375,12 @@ private fun MineStudyApp() {
         mutableStateOf<Map<String, BatchInfo>>(context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
             .getStringSet("saved_batch_info", emptySet<String>())?.mapNotNull { raw ->
                 val parts = raw.split("::", limit = 4)
-                if (parts.size >= 2) BatchInfo(parts[0], parts[1], parts.getOrNull(2).orEmpty(), parts.getOrNull(3).orEmpty()) else null
+                if (raw.startsWith("{")) {
+                    runCatching {
+                        val json = JSONObject(raw)
+                        BatchInfo(json.optString("id"), json.optString("name"), json.optString("language"), json.optString("className"), json.optString("thumbnail"))
+                    }.getOrNull()
+                } else if (parts.size >= 2) BatchInfo(parts[0], parts[1], parts.getOrNull(2).orEmpty(), parts.getOrNull(3).orEmpty()) else null
             }?.associateBy { it.id } ?: emptyMap())
     }
     var screen by remember { mutableStateOf("home") }
@@ -738,7 +764,10 @@ private fun MineStudyApp() {
         savedBatchInfo = updatedInfo
         context.getSharedPreferences("mine_study", Context.MODE_PRIVATE).edit()
             .putStringSet("saved_batch_ids", updated.toSet())
-            .putStringSet("saved_batch_info", updatedInfo.values.map { "${it.id}::${it.name}::${it.language}::${it.className}" }.toSet())
+            .putStringSet("saved_batch_info", updatedInfo.values.map { info ->
+                JSONObject().put("id", info.id).put("name", info.name).put("language", info.language)
+                    .put("className", info.className).put("thumbnail", info.thumbnail).toString()
+            }.toSet())
             .apply()
     }
 
@@ -1039,11 +1068,13 @@ private fun MineStudyApp() {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
                             items(batchSearchResults, key = { it.id }) { info ->
                                 Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(14.dp)) {
-                                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Text(info.name, fontWeight = FontWeight.SemiBold)
-                                        Text(listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · "), color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                                        Text(info.id, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall)
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        BatchThumbnail(info.thumbnail, Modifier.size(width = 104.dp, height = 76.dp))
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                            Text(info.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            Text(listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · "), color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                            Text(info.id, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             OutlinedButton(onClick = { saveBatchInfo(info) }, enabled = info.id !in savedBatchIds) {
                                                 Text(if (info.id in savedBatchIds) "Added to My batches" else "Add batch")
                                             }
@@ -1087,11 +1118,12 @@ private fun MineStudyApp() {
                             items(savedBatchIds.sorted(), key = { it }) { id ->
                                 val info = savedBatchInfo[id] ?: BatchInfo(id, "Saved batch")
                                 Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(14.dp)) {
-                                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        BatchThumbnail(info.thumbnail, Modifier.size(width = 88.dp, height = 68.dp))
                                         Column(Modifier.weight(1f)) {
-                                            Text(info.name, fontWeight = FontWeight.SemiBold)
+                                            Text(info.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                             if (info.language.isNotBlank()) Text(info.language, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                                            Text(id, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall)
+                                            Text(id, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, maxLines = 1)
                                         }
                                         if (batch == id) Icon(Icons.Default.CheckCircle, "Current batch", tint = Color(0xFF71D6C5), modifier = Modifier.padding(end = 6.dp))
                                         Button(onClick = { openBatch(info) }, enabled = !busy) { Text(if (batch == id) "Open" else "Check") }
