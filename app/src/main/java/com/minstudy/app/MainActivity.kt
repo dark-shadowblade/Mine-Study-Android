@@ -349,8 +349,8 @@ private fun MineStudyApp() {
     var batchSearchTotalPages by remember { mutableIntStateOf(1) }
     var batchSearchExecuted by remember { mutableStateOf(false) }
     var savedBatchInfo by remember {
-        mutableStateOf(context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
-            .getStringSet("saved_batch_info", emptySet())?.mapNotNull { raw ->
+        mutableStateOf<Map<String, BatchInfo>>(context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
+            .getStringSet("saved_batch_info", emptySet<String>())?.mapNotNull { raw ->
                 val parts = raw.split("::", limit = 4)
                 if (parts.size >= 2) BatchInfo(parts[0], parts[1], parts.getOrNull(2).orEmpty(), parts.getOrNull(3).orEmpty()) else null
             }?.associateBy { it.id } ?: emptyMap())
