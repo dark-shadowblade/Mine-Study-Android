@@ -125,30 +125,51 @@ private class StudyApi(private val context: Context) {
     // Mirrors Mine-Study/index.html request(): validate the envelope, then
     // return json.data ?? json so callers receive the actual API payload.
     suspend fun get(path: String, keyOverride: String? = null): Any? = withContext(Dispatchers.IO) {
-        val connection = (URL(API + path).openConnection() as HttpURLConnection)
-        try {
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 15000
-            connection.readTimeout = 25000
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("Content-Type", "application/json")
-            val requestKey = keyOverride ?: apiKey
-            if (requestKey.isNotBlank()) connection.setRequestProperty("x-api-key", requestKey)
-            val code = connection.responseCode
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            val body = stream.bufferedReader().use { it.readText() }
-            if (code !in 200..299) throw IllegalStateException("HTTP $code: $body")
-            // Match browser response.json(): the API may return an object or array.
-            val payload = JSONTokener(body).nextValue()
-            if (payload is JSONObject) {
-                if (payload.has("success") && !payload.optBoolean("success", true)) {
-                    throw IllegalStateException(payload.optString("message", "API returned an error"))
+        var lastError: Exception? = null
+        repeat(3) { attempt ->
+            var connection: HttpURLConnection? = null
+            try {
+                connection = URL(API + path).openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 15000
+                connection.readTimeout = 25000
+                connection.setRequestProperty("Accept", "application/json")
+                connection.setRequestProperty("Content-Type", "application/json")
+                val requestKey = keyOverride ?: apiKey
+                if (requestKey.isNotBlank()) connection.setRequestProperty("x-api-key", requestKey)
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (code !in 200..299) {
+                    val message = "HTTP $code: $body"
+                    if ((code == 429 || code in 500..599) && attempt < 2) {
+                        lastError = java.io.IOException(message)
+                        delay(400L * (attempt + 1))
+                        return@repeat
+                    }
+                    throw IllegalStateException(message)
                 }
-                payload.opt("data")?.takeUnless { it == JSONObject.NULL } ?: payload
-            } else {
-                payload
+                // Match browser response.json(): the API may return an object or array.
+                val payload = JSONTokener(body).nextValue()
+                if (payload is JSONObject) {
+                    if (payload.has("success") && !payload.optBoolean("success", true)) {
+                        throw IllegalStateException(payload.optString("message", "API returned an error"))
+                    }
+                    return@withContext payload.opt("data")?.takeUnless { it == JSONObject.NULL } ?: payload
+                }
+                return@withContext payload
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IllegalStateException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                if (attempt < 2) delay(400L * (attempt + 1))
+            } finally {
+                connection?.disconnect()
             }
-        } finally { connection.disconnect() }
+        }
+        throw IllegalStateException("Network request failed after 3 attempts: ${lastError?.message ?: "unknown network error"}", lastError)
     }
 
     suspend fun generateKeyLink(): String {
