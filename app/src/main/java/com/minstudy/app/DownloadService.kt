@@ -54,7 +54,8 @@ class DownloadService : Service() {
         private const val EXTRA_LIMIT = "parallel_limit"
         private const val ACTION_SET_LIMIT = "com.minstudy.app.download.SET_LIMIT"
         private const val ACTION_MOVE = "com.minstudy.app.download.MOVE"
-        private const val ACTION_REMOVE_QUEUED = "com.minstudy.app.download.REMOVE_QUEUED"\n        private const val ACTION_CLEAR_QUEUE = "com.minstudy.app.download.CLEAR_QUEUE"
+        private const val ACTION_REMOVE_QUEUED = "com.minstudy.app.download.REMOVE_QUEUED"
+        private const val ACTION_CLEAR_QUEUE = "com.minstudy.app.download.CLEAR_QUEUE"
         private const val EXTRA_MOVE = "move_direction"
         private const val EXTRA_URL = "url"
         private const val EXTRA_TITLE = "title"
@@ -82,7 +83,8 @@ class DownloadService : Service() {
         fun resumeItem(context: Context, key: String) = itemCommand(context, ACTION_RESUME_ITEM, key)
         fun setParallelLimit(context: Context, value: Int) { context.startService(Intent(context, DownloadService::class.java).setAction(ACTION_SET_LIMIT).putExtra(EXTRA_LIMIT, value.coerceIn(1, 5))) }
         fun moveQueued(context: Context, id: String, direction: String) { context.startService(Intent(context, DownloadService::class.java).setAction(ACTION_MOVE).putExtra(EXTRA_CONTROL_KEY, id).putExtra(EXTRA_MOVE, direction)) }
-        fun removeQueued(context: Context, id: String) = itemCommand(context, ACTION_REMOVE_QUEUED, id)\n        fun clearQueue(context: Context) = command(context, ACTION_CLEAR_QUEUE)
+        fun removeQueued(context: Context, id: String) = itemCommand(context, ACTION_REMOVE_QUEUED, id)
+        fun clearQueue(context: Context) = command(context, ACTION_CLEAR_QUEUE)
         private fun itemCommand(context: Context, action: String, key: String) {
             context.startService(Intent(context, DownloadService::class.java).setAction(action).putExtra(EXTRA_CONTROL_KEY, key))
         }
@@ -152,7 +154,11 @@ class DownloadService : Service() {
                 }
                 refreshQueueState("Queue order updated")
             }
-            ACTION_CLEAR_QUEUE -> {\n                pending.clear()\n                refreshQueueState("Queued downloads cleared")\n            }\n            ACTION_REMOVE_QUEUED -> {
+            ACTION_CLEAR_QUEUE -> {
+                pending.clear()
+                refreshQueueState("Queued downloads cleared")
+            }
+            ACTION_REMOVE_QUEUED -> {
                 val id = command.getStringExtra(EXTRA_CONTROL_KEY).orEmpty()
                 val remaining = pending.filterNot { it.id == id }; pending.clear(); remaining.forEach { pending.addLast(it) }
                 refreshQueueState("Removed from queue")
