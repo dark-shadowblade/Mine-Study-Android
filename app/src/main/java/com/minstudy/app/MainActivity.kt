@@ -328,7 +328,13 @@ private fun MineStudyApp() {
     var pendingDownloadTitle by remember { mutableStateOf("") }
     var pendingDownloadCategory by remember { mutableStateOf("") }
     var pendingDownloadKey by remember { mutableStateOf("") }
+    var pendingDownloadKeys by remember { mutableStateOf(setOf<String>()) }
     val downloadState by DownloadService.state.collectAsState()
+    LaunchedEffect(downloadState.queueItems, downloadState.status) {
+        val queueKeys = downloadState.queueItems.map { it.itemKey }.filter { it.isNotBlank() }.toSet()
+        if (queueKeys.isNotEmpty()) pendingDownloadKeys = pendingDownloadKeys - queueKeys
+        if (downloadState.status.startsWith("Failed") || downloadState.status.startsWith("Cancelled")) pendingDownloadKeys = emptySet()
+    }
     LaunchedEffect(downloadState.active, downloadState.status) {
         if (downloadState.active || downloadState.status.startsWith("Download complete") ||
             downloadState.status.startsWith("Download failed") || downloadState.status.startsWith("Download cancelled")) {
@@ -451,6 +457,7 @@ private fun MineStudyApp() {
         pendingDownloadTitle = title
         pendingDownloadCategory = category
         pendingDownloadKey = itemKey
+        pendingDownloadKeys = pendingDownloadKeys + itemKey
         scope.launch {
             try {
                 val sourceUrl = resolveUrl()
@@ -460,6 +467,7 @@ private fun MineStudyApp() {
                 pendingDownloadTitle = ""
                 pendingDownloadCategory = ""
                 pendingDownloadKey = ""
+                pendingDownloadKeys = pendingDownloadKeys - itemKey
                 error = "Could not start download: ${e.message ?: "Unknown error"}"
             }
         }
@@ -698,6 +706,7 @@ private fun MineStudyApp() {
                             activeDownloadKey = if (downloadState.active) downloadState.itemKey else pendingDownloadKey,
                             downloadItemKey = { item: StudyItem -> "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}" },
                             activeDownloadPercent = if (downloadState.active && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
+                            downloadingKeys = pendingDownloadKeys + downloadState.queueItems.map { it.itemKey }.filter { it.isNotBlank() }.toSet(),
                             onDownload = { item: StudyItem ->
                                 val video = type == "videos" || type == "DppVideos"
                                 val category = when (type) {
@@ -813,9 +822,7 @@ private fun MineStudyApp() {
                                 currentItemIndex = -1
                                 screen = "player"
                             } else {
-                                openedPdfUri = Uri.parse(record.uri)
-                                openedPdfTitle = record.name.substringBeforeLast('.')
-                                screen = "pdf"
+                                openLocalDocument(context, Uri.parse(record.uri))
                             }
                         },
                         onDelete = { selectedRecords ->
@@ -969,6 +976,7 @@ private fun ItemList(
     activeDownloadKey: String = "",
     downloadItemKey: (StudyItem) -> String = { it.id },
     activeDownloadPercent: Int = 0,
+    downloadingKeys: Set<String> = emptySet(),
     onDownload: ((StudyItem) -> Unit)? = null,
     showSubjectStars: Boolean = false,
     starredSubjectIds: Set<String> = emptySet(),
@@ -1055,7 +1063,7 @@ private fun ItemList(
                                 record.category == downloadCategory && (record.itemKey == itemKey ||
                                     (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)))
                             }
-                            val downloading = activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory
+                            val downloading = itemKey in downloadingKeys || (activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory)
                             IconButton(
                                 onClick = { if (!downloaded && !downloading) onDownload(item) },
                                 enabled = !downloaded && !downloading,
