@@ -83,6 +83,7 @@ class DownloadService : Service() {
     }
 
     private data class Task(
+        val id: String,
         val url: String,
         val title: String,
         val category: String,
@@ -147,6 +148,7 @@ class DownloadService : Service() {
 
     private fun enqueue(intent: Intent) {
         val task = Task(
+            java.util.UUID.randomUUID().toString(),
             intent.getStringExtra(EXTRA_URL).orEmpty(),
             intent.getStringExtra(EXTRA_TITLE) ?: "Study material",
             intent.getStringExtra(EXTRA_CATEGORY) ?: "Lectures",
@@ -254,7 +256,8 @@ class DownloadService : Service() {
             runningCount = active.values.count { !it.second.paused },
             queuedCount = pending.size,
             queueItems = active.map { (id, pair) -> DownloadQueueEntry(id, pair.first.title, pair.first.category, true, pair.second.paused) } +
-                pending.map { task -> DownloadQueueEntry(task.id, task.title, task.category, false, false) }
+                pending.map { task -> DownloadQueueEntry(task.id, task.title, task.category, false, false) },
+            maxParallel = maxParallel
         )
         if (foregroundStarted) updateNotification()
     }
