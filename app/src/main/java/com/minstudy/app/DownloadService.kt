@@ -170,11 +170,24 @@ class DownloadService : Service() {
     }
 
     private fun pumpQueue() {
-        while (active.size < 3 && pending.isNotEmpty()) {
+        var running = active.values.count { !it.second.paused }
+        for (key in resumeRequested.toList()) {
+            if (running >= 3) break
+            val entry = active[key]
+            if (entry == null) {
+                resumeRequested.remove(key)
+            } else {
+                entry.second.paused = false
+                resumeRequested.remove(key)
+                running++
+            }
+        }
+        while (running < 3 && pending.isNotEmpty()) {
             val task = pending.removeFirst()
             val id = task.itemKey.ifBlank { "\${task.title}:\${System.nanoTime()}" }
             val taskControl = DownloadControl()
             active[id] = task to taskControl
+            running++
             serviceScope.launch { runTask(id, task, taskControl) }
         }
     }
@@ -214,6 +227,7 @@ class DownloadService : Service() {
             refreshQueueState("Failed • \${task.title}: \${e.message ?: "Network error"}")
         } finally {
             active.remove(id)
+            resumeRequested.remove(id)
             pumpQueue()
             if (active.isEmpty() && pending.isEmpty()) {
                 val previous = mutableState.value
@@ -237,8 +251,10 @@ class DownloadService : Service() {
             title = first?.title ?: previous.title,
             category = first?.category ?: previous.category,
             itemKey = first?.itemKey ?: previous.itemKey,
-            runningCount = active.size,
-            queuedCount = pending.size
+            runningCount = active.values.count { !it.second.paused },
+            queuedCount = pending.size,
+            queueItems = active.map { (id, pair) -> DownloadQueueEntry(id, pair.first.title, pair.first.category, true, pair.second.paused) } +
+                pending.map { task -> DownloadQueueEntry(task.itemKey, task.title, task.category, false, false) }
         )
         if (foregroundStarted) updateNotification()
     }
