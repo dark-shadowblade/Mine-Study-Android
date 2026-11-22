@@ -1205,7 +1205,7 @@ private fun MineStudyApp() {
                                 ) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BatchThumbnail(info.thumbnail, Modifier.size(104.dp).aspectRatio(1f))
+                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(2f / 1f))
                                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                                 Text(info.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                 val details = listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
@@ -1280,7 +1280,7 @@ private fun MineStudyApp() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(18.dp)) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BatchThumbnail(info.thumbnail, Modifier.size(104.dp).aspectRatio(1f))
+                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(2f / 1f))
                                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                                 Text(info.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                 if (info.language.isNotBlank() || info.className.isNotBlank()) {
