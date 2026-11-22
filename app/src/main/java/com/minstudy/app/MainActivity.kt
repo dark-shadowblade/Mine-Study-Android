@@ -522,10 +522,11 @@ private fun MineStudyApp() {
                         currentVideo,
                         hasPrevious = currentItemIndex > 0,
                         hasNext = currentItemIndex in 0 until contents.lastIndex,
-                        onPrevious = { playLecture(currentItemIndex - 1) },
-                        onNext = { playLecture(currentItemIndex + 1) },
+                        onPrevious = { playLecture(currentItemIndex + 1) },
+                        onNext = { playLecture(currentItemIndex - 1) },
                         onBack = { screen = "contents" },
-                        isDownloaded = downloadRecords.any { it.category == (if (type == "DppVideos") "DPP Videos" else "Lectures") && it.name.removeSuffix(".mp4").equals(currentTitle, true) },
+                        isDownloaded = downloadRecords.any { record -> record.category == (if (type == "DppVideos") "DPP Videos" else "Lectures") && record.name.substringBeforeLast('.').equals(currentTitle.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim(), true) },
+                        downloadPercent = if (downloadState.active && downloadState.title == currentTitle && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
                         isDownloading = (downloadState.active && downloadState.title == currentTitle) || (pendingDownloadTitle == currentTitle),
                         onDownload = {
                             val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
@@ -581,12 +582,12 @@ private fun MineStudyApp() {
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         SegmentedButton(
                             selected = batch == BATCH_ONE,
-                            onClick = { batch = BATCH_ONE },
+                            onClick = { batch = BATCH_ONE; api.batchId = BATCH_ONE },
                             shape = SegmentedButtonDefaults.itemShape(0, 2)
                         ) { Text("Server 1") }
                         SegmentedButton(
                             selected = batch == BATCH_TWO,
-                            onClick = { batch = BATCH_TWO },
+                            onClick = { batch = BATCH_TWO; api.batchId = BATCH_TWO },
                             shape = SegmentedButtonDefaults.itemShape(1, 2)
                         ) { Text("Server 2") }
                     }
@@ -594,7 +595,7 @@ private fun MineStudyApp() {
                     Text("API KEY", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
                     OutlinedTextField(
                         value = apiKey,
-                        onValueChange = { apiKey = it },
+                        onValueChange = { value -> apiKey = value; api.apiKey = value; api.batchId = batch },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
@@ -657,8 +658,8 @@ private fun MineStudyApp() {
                 api.batchId = batch
                 showSettings = false
                 if (apiKey.isNotBlank()) loadSubjects()
-                else { screen = "home"; error = "Add and verify your API key in Settings." }
-            }) { Text("Save") } },
+                else { screen = "home"; error = "Add an API key in Settings." }
+            }) { Text("Done") } },
             dismissButton = { TextButton(onClick = { showSettings = false }) { Text("Cancel") } }
         )
     }
@@ -791,6 +792,7 @@ private fun VideoScreen(
     onBack: () -> Unit,
     isDownloaded: Boolean = false,
     isDownloading: Boolean = false,
+    downloadPercent: Int = 0,
     onDownload: () -> Unit
 ) {
     val context = LocalContext.current
@@ -915,7 +917,7 @@ private fun VideoScreen(
                 onValueChangeFinished = { player.seekTo(positionMs); isScrubbing = false },
                 valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
                 enabled = durationMs > 0L,
-                modifier = Modifier.fillMaxWidth().height(if (compact) 24.dp else 30.dp)
+                modifier = Modifier.fillMaxWidth().height(if (compact) 18.dp else 22.dp)
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(formatTime(positionMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
@@ -1025,7 +1027,7 @@ private fun VideoScreen(
                             audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
                         },
                         valueRange = 0f..maxVolume.toFloat(),
-                        modifier = Modifier.weight(1f).height(24.dp)
+                        modifier = Modifier.weight(1f).height(18.dp)
                     )
                     Text("${volume * 100 / maxVolume}%", color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
@@ -1106,11 +1108,14 @@ private fun VideoScreen(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(title, modifier = Modifier.weight(1f), maxLines = 2, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = onDownload, enabled = !isDownloaded && !isDownloading, modifier = Modifier.size(42.dp)) {
+                IconButton(onClick = onDownload, enabled = !isDownloaded && !isDownloading, modifier = Modifier.size(36.dp)) {
                     when {
-                        isDownloading -> CircularProgressIndicator(Modifier.size(21.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
-                        isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(25.dp))
-                        else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFF858B98), modifier = Modifier.size(25.dp))
+                        isDownloading -> Box(contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(23.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
+                            Text("$downloadPercent%", fontSize = 7.sp, color = Color.White)
+                        }
+                        isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(23.dp))
+                        else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFF858B98), modifier = Modifier.size(23.dp))
                     }
                 }
             }
