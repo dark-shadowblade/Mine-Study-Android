@@ -1237,13 +1237,7 @@ private fun VideoScreen(
                     Text("/", color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.labelSmall)
                     Text(formatTime(durationMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
                     Spacer(Modifier.weight(1f))
-                    IconButton(
-                        onClick = {
-                            if (volume > 0) { previousVolume = volume; volume = 0 }
-                            else volume = previousVolume.coerceIn(1, maxVolume)
-                            audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
-                        }, modifier = Modifier.size(32.dp)
-                    ) {
+                    IconButton(onClick = { volumePanel = !volumePanel }, modifier = Modifier.size(32.dp)) {
                         Icon(
                             when { volume == 0 -> Icons.Default.VolumeMute; volume < maxVolume / 2 -> Icons.Default.VolumeDown; else -> Icons.Default.VolumeUp },
                             "Mute or restore volume", tint = Color.White, modifier = Modifier.size(19.dp)
@@ -1261,9 +1255,6 @@ private fun VideoScreen(
                             modifier = Modifier.width(104.dp).height(24.dp),
                             colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.35f))
                         )
-                    }
-                    IconButton(onClick = { volumePanel = !volumePanel }, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Default.Settings, "Volume settings", tint = if (volumePanel) Color(0xFFFF0033) else Color.White, modifier = Modifier.size(17.dp))
                     }
                 }
             }
