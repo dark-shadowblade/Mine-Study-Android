@@ -6,28 +6,106 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.delay
 
 /**
- * Parallel, retrying downloader for the CDN's ?s=start&e=end range protocol.
- * Each worker owns a disjoint file range; short CDN responses are continued
- * from the actual returned Content-Range end rather than leaving gaps.
+ * Parallel range downloader with durable chunk checkpoints.
+ * Only chunks recorded as complete in the sidecar are trusted after a restart.
  */
 object ParallelCdnDownloader {
     private const val CHUNK = 1024 * 1024
     private const val WORKERS = 4
     private data class Part(val start: Long, val end: Long, val total: Long, val bytes: ByteArray)
 
+    private class Checkpoint(
+        private val file: File,
+        val fingerprint: String,
+        val total: Long,
+        val chunkCount: Int
+    ) {
+        private val completed = BooleanArray(chunkCount)
+
+        @Synchronized fun isComplete(index: Int): Boolean = completed[index]
+
+        @Synchronized fun markComplete(index: Int) {
+            completed[index] = true
+            persist()
+        }
+
+        @Synchronized fun completedBytes(): Long {
+            var sum = 0L
+            completed.forEachIndexed { index, done ->
+                if (done) sum += minOf(CHUNK.toLong(), total - index.toLong() * CHUNK)
+            }
+            return sum
+        }
+
+        @Synchronized private fun persist() {
+            val array = JSONArray()
+            completed.forEach { array.put(it) }
+            val json = JSONObject()
+                .put("fingerprint", fingerprint)
+                .put("total", total)
+                .put("chunkSize", CHUNK)
+                .put("completed", array)
+            val temp = File(file.parentFile, file.name + ".tmp")
+            temp.writeText(json.toString())
+            if (file.exists() && !file.delete()) throw IOException("Could not replace download checkpoint")
+            if (!temp.renameTo(file)) throw IOException("Could not save download checkpoint")
+        }
+
+        companion object {
+            fun loadOrCreate(file: File, fingerprint: String, total: Long): Checkpoint {
+                val countLong = (total + CHUNK - 1L) / CHUNK
+                if (countLong <= 0L || countLong > Int.MAX_VALUE) throw IOException("Invalid video chunk count")
+                val count = countLong.toInt()
+                val checkpoint = Checkpoint(file, fingerprint, total, count)
+                val saved = runCatching { JSONObject(file.readText()) }.getOrNull()
+                val chunks = saved?.optJSONArray("completed")
+                val valid = saved?.optString("fingerprint") == fingerprint &&
+                    saved.optLong("total", -1L) == total &&
+                    saved.optInt("chunkSize", -1) == CHUNK &&
+                    chunks?.length() == count
+                if (valid && chunks != null) {
+                    for (i in 0 until count) checkpoint.completed[i] = chunks.optBoolean(i, false)
+                } else {
+                    file.delete()
+                    File(file.parentFile, file.name + ".tmp").delete()
+                }
+                return checkpoint
+            }
+        }
+    }
+
+    fun checkpointFile(target: File): File = File(target.parentFile, target.name + ".json")
+
+    fun clearCheckpoint(target: File) {
+        target.delete()
+        checkpointFile(target).delete()
+        File(target.parentFile, target.name + ".json.tmp").delete()
+    }
+
+    private fun sourceFingerprint(source: Uri): String {
+        // Ignore expiring signature/query parameters; item identity plus CDN path is stable.
+        val stable = "${source.scheme}://${source.host}${source.encodedPath}"
+        return MessageDigest.getInstance("SHA-256")
+            .digest(stable.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
     suspend fun download(
         source: String,
-        target: java.io.File,
+        target: File,
         control: DownloadControl,
         progress: (Long, Long) -> Unit
     ) = withContext(Dispatchers.IO) {
@@ -36,54 +114,67 @@ object ParallelCdnDownloader {
             !Regex("a\\d+\\.stmvv1\\.xyz", RegexOption.IGNORE_CASE).matches(base.host ?: "")) {
             throw IOException("Invalid video CDN host")
         }
+        target.parentFile?.mkdirs()
+        val checkpointFile = checkpointFile(target)
         val first = fetch(base, 0L, CHUNK - 1L)
         val total = first.total
         if (total <= 0L) throw IOException("CDN returned an invalid video size")
-        target.parentFile?.mkdirs()
+
+        var checkpoint = Checkpoint.loadOrCreate(checkpointFile, sourceFingerprint(base), total)
+        if (target.exists() && target.length() != total) {
+            target.delete()
+            checkpointFile.delete()
+            checkpoint = Checkpoint.loadOrCreate(checkpointFile, sourceFingerprint(base), total)
+        }
         RandomAccessFile(target, "rw").use { file ->
             file.setLength(total)
-            val written = AtomicLong(0L)
-            fun writePart(part: Part) {
-                synchronized(file) {
-                    file.seek(part.start)
-                    file.write(part.bytes)
+            val count = checkpoint.chunkCount
+            val completedCount = AtomicInteger(0)
+            progress(checkpoint.completedBytes(), total)
+
+            suspend fun writeChunk(index: Int, initial: Part? = null) {
+                control.checkpoint()
+                if (checkpoint.isComplete(index)) return
+                val start = index.toLong() * CHUNK
+                val end = minOf(start + CHUNK - 1L, total - 1L)
+                var cursor = start
+                var pending = initial
+                while (cursor <= end) {
+                    control.checkpoint()
+                    val part = pending ?: retryingFetch(base, cursor, end, total)
+                    pending = null
+                    if (part.start != cursor || part.end > end || part.bytes.isEmpty()) {
+                        throw IOException("CDN returned a non-contiguous byte range")
+                    }
+                    synchronized(file) {
+                        file.seek(part.start)
+                        file.write(part.bytes)
+                    }
+                    cursor = part.end + 1L
                 }
-                written.addAndGet(part.bytes.size.toLong())
-                progress(written.get(), total)
-            }
-            var firstCursor = 0L
-            var firstPart = first
-            while (firstCursor < minOf(CHUNK.toLong(), total)) {
-                if (firstPart.start != firstCursor) throw IOException("CDN returned a non-contiguous initial range")
-                writePart(firstPart)
-                firstCursor = firstPart.end + 1L
-                if (firstCursor < minOf(CHUNK.toLong(), total)) {
-                    firstPart = retryingFetch(base, firstCursor, minOf(CHUNK.toLong() - 1L, total - 1L), total)
-                }
+                checkpoint.markComplete(index)
+                completedCount.incrementAndGet()
+                progress(checkpoint.completedBytes(), total)
             }
 
-            val next = AtomicInteger(CHUNK)
             coroutineScope {
+                val next = AtomicInteger(0)
                 (0 until WORKERS).map {
                     async(Dispatchers.IO) {
                         while (true) {
                             control.checkpoint()
-                            val start = next.getAndAdd(CHUNK).toLong()
-                            if (start >= total) break
-                            val blockEnd = minOf(start + CHUNK - 1L, total - 1L)
-                            var cursor = start
-                            while (cursor <= blockEnd) {
-                                control.checkpoint()
-                                val part = retryingFetch(base, cursor, blockEnd, total)
-                                if (part.bytes.isEmpty()) throw IOException("CDN returned an empty range")
-                                writePart(part)
-                                cursor = part.end + 1L
-                            }
+                            val index = next.getAndIncrement()
+                            if (index >= count) break
+                            if (checkpoint.isComplete(index)) continue
+                            val initial = if (index == 0) first else null
+                            writeChunk(index, initial)
                         }
                     }
                 }.awaitAll()
             }
-            if (written.get() != total) throw IOException("Download incomplete: received ${written.get()} of $total bytes")
+            if (checkpoint.completedBytes() != total) {
+                throw IOException("Download incomplete: saved ${checkpoint.completedBytes()} of $total bytes")
+            }
         }
     }
 
@@ -144,9 +235,9 @@ object ParallelCdnDownloader {
                 conn.inputStream.use { input ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
+                        val amount = input.read(buffer)
+                        if (amount < 0) break
+                        output.write(buffer, 0, amount)
                     }
                 }
                 val bytes = output.toByteArray()
