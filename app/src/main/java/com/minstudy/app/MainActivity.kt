@@ -990,7 +990,7 @@ private fun MineStudyApp() {
         if (screen == "all_batches") {
             snapshotFlow {
                 val layout = batchListState.layoutInfo
-                Triple(layout.visibleItemsInfo.lastOrNull()?.index ?: -1, layout.totalItemsCount, layout.canScrollBackward)
+                Triple(layout.visibleItemsInfo.lastOrNull()?.index ?: -1, layout.totalItemsCount, batchListState.canScrollBackward)
             }.distinctUntilChanged().collect { (lastVisible, totalItems, userHasScrolled) ->
                 // Prevent auto-draining all API pages when there are few/no matches.
                 if (batchSearchExecuted && !batchSearchLoading &&
