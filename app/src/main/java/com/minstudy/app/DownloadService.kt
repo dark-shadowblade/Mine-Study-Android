@@ -206,7 +206,7 @@ class DownloadService : Service() {
     private fun pumpQueue() {
         var running = active.values.count { !it.second.paused }
         for (key in resumeRequested.toList()) {
-            if (running >= 3) break
+            if (running >= maxParallel) break
             val entry = active[key]
             if (entry == null) {
                 resumeRequested.remove(key)
@@ -218,7 +218,7 @@ class DownloadService : Service() {
         }
         while (running < maxParallel && pending.isNotEmpty()) {
             val task = pending.removeFirst()
-            val id = task.itemKey.ifBlank { "\${task.title}:\${System.nanoTime()}" }
+            val id = task.id
             val taskControl = DownloadControl()
             active[id] = task to taskControl
             running++
