@@ -1526,7 +1526,7 @@ private fun VideoScreen(
                             onDragCancel = { activeSide = ""; gestureActive = false }
                         )
                     }
-            .pointerInput(player, controlsLocked) {
+            .pointerInput(player, controlsLocked, playbackSpeed) {
                 var speedSwipeDistance = 0f
                 detectTransformGestures { _, pan, _, _ ->
                     if (!controlsLocked && kotlin.math.abs(pan.y) > 0.5f) {
@@ -1666,7 +1666,7 @@ private fun VideoScreen(
                             onDragCancel = { activeSide = ""; gestureActive = false }
                         )
                     }
-                    .pointerInput(player, controlsLocked) {
+                    .pointerInput(player, controlsLocked, playbackSpeed) {
                         var speedSwipeDistance = 0f
                         detectTransformGestures { _, pan, _, _ ->
                             if (!controlsLocked && kotlin.math.abs(pan.y) > 0.5f) {
