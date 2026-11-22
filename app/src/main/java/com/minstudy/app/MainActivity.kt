@@ -597,8 +597,8 @@ private fun MineStudyApp() {
                             listOf("videos" to "Lectures", "notes" to "Notes", "DppNotes" to "DPP", "DppVideos" to "DPP videos").forEach { (key, label) ->
                                 FilterChip(selected = type == key, onClick = { selectedChapter?.let { loadContents(it, key) } }, label = { Text(label, fontSize = 11.sp) })
                             }
-                        }                        ItemList(                            "Learning material", contents, busy, error,
-                            showThumbnails = true,
+                        }
+                        ItemList(                            "Learning material", contents, busy, error,                            showThumbnails = true,
                             actionLabel = if (type == "videos" || type == "DppVideos") "Play" else "Open PDF",
                             downloadCategory = when (type) {
                                 "videos" -> "Lectures"
@@ -1197,8 +1197,7 @@ private fun VideoScreen(
                             }
                             isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879))
                             else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFFB8BEC9))
-                        }
-                    }                }
+                        }                    }                }
                 SpeedPicker()
                 IconButton(onClick = {                    controlsLocked = true
                     showControls = false
