@@ -106,7 +106,6 @@ class DownloadService : Service() {
     private val pending = ArrayDeque<Task>()
     private val active = linkedMapOf<String, Pair<Task, DownloadControl>>()
     private val resumeRequested = linkedSetOf<String>()
-    private val progressById = mutableMapOf<String, Pair<Long, Long>>()
     private var maxParallel = 3
     private var foregroundStarted = false
     private var currentTitle = "Study material"
@@ -245,7 +244,7 @@ class DownloadService : Service() {
                 val now = System.currentTimeMillis()
                 val elapsed = (now - lastProgressAt).coerceAtLeast(1L)
                 val speed = if (elapsed >= 700L) ((bytes - lastProgressBytes) * 1000L / elapsed).coerceAtLeast(0L) else mutableState.value.speed
-                progressById[id] = bytes to total
+                val updatedQueue = mutableState.value.queueItems.map { entry -> if (entry.id == id) entry.copy(bytes = bytes, total = total) else entry }
                 mutableState.value = mutableState.value.copy(
                     status = "Downloading • ${task.title}",
                     active = true,
@@ -255,7 +254,7 @@ class DownloadService : Service() {
                     title = task.title,
                     category = task.category,
                     itemKey = task.itemKey,
-                    queueItems = queueSnapshot()
+                    queueItems = updatedQueue
                 )
                 if (elapsed >= 700L) {
                     lastProgressAt = now
@@ -272,7 +271,6 @@ class DownloadService : Service() {
         } finally {
             active.remove(id)
             resumeRequested.remove(id)
-            progressById.remove(id)
             pumpQueue()
             if (active.isEmpty() && pending.isEmpty()) {
                 val previous = mutableState.value
@@ -286,11 +284,13 @@ class DownloadService : Service() {
         }
     }
 
-    private fun queueSnapshot(): List<DownloadQueueEntry> =
-        active.map { (id, pair) ->
-            val progress = progressById[id]
-            DownloadQueueEntry(id, pair.first.title, pair.first.category, true, pair.second.paused, pair.first.itemKey, progress?.first ?: 0L, progress?.second ?: -1L)
+    private fun queueSnapshot(): List<DownloadQueueEntry> {
+        val previous = mutableState.value.queueItems.associateBy { it.id }
+        return active.map { (id, pair) ->
+            val progress = previous[id]
+            DownloadQueueEntry(id, pair.first.title, pair.first.category, true, pair.second.paused, pair.first.itemKey, progress?.bytes ?: 0L, progress?.total ?: -1L)
         } + pending.map { task -> DownloadQueueEntry(task.id, task.title, task.category, false, false, task.itemKey) }
+    }
 
     private fun refreshQueueState(message: String) {
         val previous = mutableState.value
