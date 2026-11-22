@@ -217,6 +217,9 @@ fun DownloadGallery(
     bytes: Long,
     total: Long,
     speed: Long = 0L,
+    queueItems: List<DownloadQueueEntry> = emptyList(),
+    onPauseItem: (String) -> Unit,
+    onResumeItem: (String) -> Unit,
     onTogglePause: () -> Unit,
     onCancel: () -> Unit,
     onOpen: (DownloadRecord) -> Unit,
@@ -261,9 +264,6 @@ fun DownloadGallery(
                     androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         androidx.compose.material3.Text(status, Modifier.weight(1f), fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 2)
                         if (active) {
-                            androidx.compose.material3.IconButton(onClick = onTogglePause) {
-                                androidx.compose.material3.Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (paused) "Resume" else "Pause")
-                            }
                             androidx.compose.material3.IconButton(onClick = onCancel) {
                                 androidx.compose.material3.Icon(Icons.Default.Close, "Cancel", tint = androidx.compose.material3.MaterialTheme.colorScheme.error)
                             }
@@ -279,6 +279,29 @@ fun DownloadGallery(
                             style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                    queueItems.forEach { item ->
+                        androidx.compose.foundation.layout.Row(
+                            Modifier.fillMaxWidth().padding(top = 3.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                        ) {
+                            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                                androidx.compose.material3.Text(item.title, maxLines = 1, style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
+                                androidx.compose.material3.Text(
+                                    if (item.paused) "Paused • slot available" else if (item.active) "Downloading" else "Queued",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (item.active) {
+                                androidx.compose.material3.IconButton(onClick = { if (item.paused) onResumeItem(item.id) else onPauseItem(item.id) }) {
+                                    androidx.compose.material3.Icon(
+                                        if (item.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                        contentDescription = if (item.paused) "Resume this download" else "Pause this download"
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
