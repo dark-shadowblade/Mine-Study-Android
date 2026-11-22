@@ -520,6 +520,7 @@ fun DownloadCenterScreen(
     onOpenGallery: () -> Unit
 ) {
     var confirmAction by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var confirmCancelId by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
@@ -586,7 +587,7 @@ fun DownloadCenterScreen(
                                 androidx.compose.material3.IconButton(onClick = { if (item.paused) onResume(item.id) else onPause(item.id) }, modifier = Modifier.size(34.dp)) {
                                     androidx.compose.material3.Icon(if (item.paused) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = if (item.paused) "Resume" else "Pause", modifier = Modifier.size(19.dp))
                                 }
-                                androidx.compose.material3.IconButton(onClick = { onCancelItem(item.id) }, modifier = Modifier.size(30.dp)) {
+                                androidx.compose.material3.IconButton(onClick = { confirmCancelId = item.id }, modifier = Modifier.size(30.dp)) {
                                     androidx.compose.material3.Icon(Icons.Default.Close, contentDescription = "Cancel this download", tint = androidx.compose.material3.MaterialTheme.colorScheme.error, modifier = Modifier.size(17.dp))
                                 }
                             } else {
@@ -600,6 +601,21 @@ fun DownloadCenterScreen(
                 }
             }
         }
+    }
+    val cancelTarget = queueItems.firstOrNull { it.id == confirmCancelId }
+    if (cancelTarget != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmCancelId = null },
+            title = { androidx.compose.material3.Text("Cancel this download?") },
+            text = { androidx.compose.material3.Text("${cancelTarget.title} will be cancelled and removed from the download list. Other downloads will continue.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    onCancelItem(cancelTarget.id)
+                    confirmCancelId = null
+                }) { androidx.compose.material3.Text("Cancel download", color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmCancelId = null }) { androidx.compose.material3.Text("Keep downloading") } }
+        )
     }
     if (confirmAction.isNotEmpty()) {
         val clearing = confirmAction == "clear"
