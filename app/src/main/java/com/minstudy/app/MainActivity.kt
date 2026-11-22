@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.VolumeDown
@@ -1005,10 +1006,14 @@ private fun VideoScreen(
     var gestureLabel by remember { mutableStateOf("") }
     var gestureValue by remember { mutableStateOf("") }
 
-    LaunchedEffect(gestureActive) {
-        if (gestureActive) {
-            delay(900)
-            gestureActive = false
+    val originalWindowBrightness = remember { activity?.window?.attributes?.screenBrightness ?: -1f }
+    DisposableEffect(activity) {
+        onDispose {
+            activity?.window?.let { window ->
+                val params = window.attributes
+                params.screenBrightness = originalWindowBrightness
+                window.attributes = params
+            }
         }
     }
 
@@ -1401,8 +1406,8 @@ private fun VideoScreen(
                                     gestureActive = true
                                 }
                             },
-                            onDragEnd = { activeSide = "" },
-                            onDragCancel = { activeSide = "" }
+                            onDragEnd = { activeSide = ""; gestureActive = false },
+                            onDragCancel = { activeSide = ""; gestureActive = false }
                         )
                     }
             .pointerInput(player, controlsLocked) {
@@ -1432,7 +1437,7 @@ private fun VideoScreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Icon(
-                        if (gestureLabel == "Brightness") Icons.Default.Settings
+                        if (gestureLabel == "Brightness") Icons.Default.Brightness6
                         else if (volume == 0) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
                         contentDescription = null, tint = Color.White, modifier = Modifier.size(25.dp)
                     )
@@ -1498,8 +1503,8 @@ private fun VideoScreen(
                                     gestureActive = true
                                 }
                             },
-                            onDragEnd = { activeSide = "" },
-                            onDragCancel = { activeSide = "" }
+                            onDragEnd = { activeSide = ""; gestureActive = false },
+                            onDragCancel = { activeSide = ""; gestureActive = false }
                         )
                     }
                     .pointerInput(player, controlsLocked) {
@@ -1530,7 +1535,7 @@ private fun VideoScreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Icon(
-                        if (gestureLabel == "Brightness") Icons.Default.Settings
+                        if (gestureLabel == "Brightness") Icons.Default.Brightness6
                         else if (volume == 0) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
                         contentDescription = null, tint = Color.White, modifier = Modifier.size(25.dp)
                     )
