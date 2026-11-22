@@ -497,8 +497,7 @@ private fun MineStudyApp() {
                 val contentPath = "/batch/${api.batchId}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type=${enc(type)}"
                 contents = api.list(api.get(contentPath), "contents")
                 screen = "contents"
-            } catch (e: Exception) {                error = e.message ?: "Could not resume your last chapter"
-            } finally { busy = false }        }
+            } catch (e: Exception) {                error = e.message ?: "Could not resume your last chapter"            } finally { busy = false }        }
     }
 
     fun goBack() {
@@ -997,8 +996,7 @@ private fun VideoScreen(
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(true) }
     var positionMs by remember { mutableLongStateOf(0L) }    var durationMs by remember { mutableLongStateOf(0L) }
-    var showRemainingTime by remember { mutableStateOf(false) }
-    var isScrubbing by remember { mutableStateOf(false) }    var playerError by remember { mutableStateOf("") }
+    var showRemainingTime by remember { mutableStateOf(false) }    var isScrubbing by remember { mutableStateOf(false) }    var playerError by remember { mutableStateOf("") }
     val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
     var volume by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
@@ -1077,8 +1075,8 @@ private fun VideoScreen(
         }
     }
 
-    LaunchedEffect(showControls, speedMenu, speedDialog, isScrubbing, fullScreen) {
-        if (showControls && !speedMenu && !speedDialog && !isScrubbing && !controlsLocked) {
+    LaunchedEffect(showControls, speedMenu, speedDialog, isScrubbing, fullScreen, buffering) {
+        if (showControls && !buffering && !speedMenu && !speedDialog && !isScrubbing && !controlsLocked) {
             delay(4500)
             showControls = false
         }
@@ -1371,11 +1369,6 @@ private fun VideoScreen(
                 update = { it.player = player },
                 modifier = Modifier.fillMaxSize()
             )
-            if (buffering && playerError.isBlank()) {
-                Column(Modifier.align(Alignment.Center).background(Color(0x99000000), RoundedCornerShape(14.dp)).padding(horizontal = 18.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 2.5.dp, color = Color.White)
-                }
-            }
             if (controlsLocked) {
                 Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
                     .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 9.dp))
@@ -1414,11 +1407,6 @@ private fun VideoScreen(
                     update = { it.player = player },
                     modifier = Modifier.fillMaxSize()
                 )
-            if (buffering && playerError.isBlank()) {
-                Column(Modifier.align(Alignment.Center).background(Color(0x99000000), RoundedCornerShape(14.dp)).padding(horizontal = 18.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 2.5.dp, color = Color.White)
-                }
-            }
                 if (controlsLocked) {
                     Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
                         .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 8.dp))
