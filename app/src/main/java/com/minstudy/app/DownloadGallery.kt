@@ -81,6 +81,19 @@ object DownloadRepository {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(RECORDS, array.toString()).apply()
     }
 
+    fun delete(context: Context, record: DownloadRecord) {
+        runCatching { context.contentResolver.delete(Uri.parse(record.uri), null, null) }
+        val remaining = list(context).filterNot { it.uri == record.uri }
+        val array = JSONArray()
+        remaining.forEach { item ->
+            array.put(JSONObject().apply {
+                put("uri", item.uri); put("name", item.name); put("category", item.category)
+                put("mime", item.mime); put("bytes", item.bytes); put("itemKey", item.itemKey)
+            })
+        }
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(RECORDS, array.toString()).apply()
+    }
+
     suspend fun download(
         context: Context,
         sourceUrl: String,
@@ -203,6 +216,7 @@ fun DownloadGallery(
     onTogglePause: () -> Unit,
     onCancel: () -> Unit,
     onOpen: (DownloadRecord) -> Unit,
+    onDelete: (DownloadRecord) -> Unit,
     onRefresh: () -> Unit
 ) {
     var selected by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("All") }
@@ -217,6 +231,13 @@ fun DownloadGallery(
             androidx.compose.material3.Text("Downloads", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
             androidx.compose.material3.TextButton(onClick = onRefresh) { androidx.compose.material3.Text("Refresh") }
         }
+        val totalStored = records.sumOf { it.bytes }
+        androidx.compose.material3.Text(
+            "${records.size} files • ${formatDownloadBytes(totalStored)} stored",
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
         if (status.isNotBlank()) {
             androidx.compose.material3.Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -294,10 +315,22 @@ fun DownloadGallery(
                             androidx.compose.material3.IconButton(onClick = { onOpen(record) }) {
                                 androidx.compose.material3.Icon(Icons.Default.ArrowForward, contentDescription = "Open")
                             }
+                            androidx.compose.material3.IconButton(onClick = { onDelete(record) }) {
+                                androidx.compose.material3.Icon(Icons.Default.Close, contentDescription = "Delete download",
+                                    tint = androidx.compose.material3.MaterialTheme.colorScheme.error)
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+
+private fun formatDownloadBytes(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val mb = bytes / (1024.0 * 1024.0)
+    return if (mb >= 1024.0) String.format(java.util.Locale.US, "%.2f GB", mb / 1024.0)
+    else String.format(java.util.Locale.US, "%.1f MB", mb)
 }
