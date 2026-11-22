@@ -497,8 +497,7 @@ private fun MineStudyApp() {
                 val contentPath = "/batch/${api.batchId}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type=${enc(type)}"
                 contents = api.list(api.get(contentPath), "contents")
                 screen = "contents"
-            } catch (e: Exception) {
-                error = e.message ?: "Could not resume your last chapter"
+            } catch (e: Exception) {                error = e.message ?: "Could not resume your last chapter"
             } finally { busy = false }        }
     }
 
@@ -997,8 +996,7 @@ private fun VideoScreen(
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(true) }
-    var positionMs by remember { mutableLongStateOf(0L) }
-    var durationMs by remember { mutableLongStateOf(0L) }
+    var positionMs by remember { mutableLongStateOf(0L) }    var durationMs by remember { mutableLongStateOf(0L) }
     var showRemainingTime by remember { mutableStateOf(false) }
     var isScrubbing by remember { mutableStateOf(false) }    var playerError by remember { mutableStateOf("") }
     val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -1270,17 +1268,38 @@ private fun VideoScreen(
                         )
                     }
                     if (volumePanel) {
-                        Slider(
-                            value = volume.toFloat(),
-                            onValueChange = {
-                                volume = it.toInt().coerceIn(0, maxVolume)
-                                if (volume > 0) previousVolume = volume
-                                audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
-                            },
-                            valueRange = 0f..maxVolume.toFloat(),
-                            modifier = Modifier.width(92.dp).height(18.dp),
-                            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.35f))
-                        )
+                        Canvas(
+                            Modifier.width(92.dp).height(20.dp)
+                                .pointerInput(maxVolume) {
+                                    detectTapGestures { point ->
+                                        volume = ((point.x / size.width).coerceIn(0f, 1f) * maxVolume).toInt()
+                                        if (volume > 0) previousVolume = volume
+                                        audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                                    }
+                                }
+                                .pointerInput(maxVolume) {
+                                    detectDragGestures(
+                                        onDragStart = { point ->
+                                            volume = ((point.x / size.width).coerceIn(0f, 1f) * maxVolume).toInt()
+                                            if (volume > 0) previousVolume = volume
+                                            audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                                        },
+                                        onDrag = { change, _ ->
+                                            volume = ((change.position.x / size.width).coerceIn(0f, 1f) * maxVolume).toInt()
+                                            if (volume > 0) previousVolume = volume
+                                            audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                                            change.consume()
+                                        }
+                                    )
+                                }
+                        ) {
+                            val centerY = size.height / 2f
+                            val fraction = volume.toFloat() / maxVolume.toFloat()
+                            val endX = size.width * fraction
+                            drawLine(Color.White.copy(alpha = 0.32f), Offset(0f, centerY), Offset(size.width, centerY), 2.dp.toPx(), cap = StrokeCap.Round)
+                            drawLine(Color.White, Offset(0f, centerY), Offset(endX, centerY), 2.dp.toPx(), cap = StrokeCap.Round)
+                            drawCircle(Color.White, 4.dp.toPx(), Offset(endX.coerceIn(4.dp.toPx(), size.width - 4.dp.toPx()), centerY))
+                        }
                     }
                 }
             }
@@ -1434,7 +1453,14 @@ private fun VideoScreen(
 
 private fun formatTime(ms: Long): String {
     val seconds = ms.coerceAtLeast(0L) / 1000L
-    return String.format(java.util.Locale.US, "%d:%02d", seconds / 60L, seconds % 60L)
+    val hours = seconds / 3600L
+    val minutes = (seconds % 3600L) / 60L
+    val remainder = seconds % 60L
+    return if (hours > 0L) {
+        String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes, remainder)
+    } else {
+        String.format(java.util.Locale.US, "%d:%02d", minutes, remainder)
+    }
 }
 
 private fun formatBytes(value: Long): String {
