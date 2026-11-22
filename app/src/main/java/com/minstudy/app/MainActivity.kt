@@ -207,20 +207,22 @@ private class StudyApi(private val context: Context) {
         }
     }
 
-    suspend fun verifyKey(candidate: String): Int {
+    suspend fun verifyKey(candidate: String, onStatus: (String) -> Unit = {}): Int {
         if (candidate.isBlank()) throw IllegalStateException("Enter an API key first")
         val subjectPath = "/batch/$batchId/subject"
 
-        // A key may already be activated on the server even when app data has
-        // been cleared. Test it directly first so we don't try to activate it twice.
+        // Check first: a key may already be activated even after app data is cleared.
+        onStatus("Checking whether API key is already activated...")
         try {
             val existingResponse = get(subjectPath, candidate)
             return list(existingResponse, "subjects").size
         } catch (_: Exception) {
-            // First-time keys still need activation before the batch API accepts them.
+            // Not active for this batch yet; activate it before retrying.
         }
 
+        onStatus("Key not activated. Activating now...")
         activateKey(candidate)
+        onStatus("Checking activated API key...")
         val activatedResponse = get(subjectPath, candidate)
         return list(activatedResponse, "subjects").size
     }
@@ -377,18 +379,19 @@ private fun MineStudyApp() {
         }
     }
 
-    // Pasting a key triggers server activation and verification; save only after both succeed.
+    // A newly pasted key is checked automatically. Existing saved keys do not
+    // close Settings just because the user opened the dialog.
     LaunchedEffect(apiKey, batch, showSettings) {
-        if (showSettings && apiKey.isNotBlank()) {
+        if (showSettings && apiKey.isNotBlank() && apiKey.trim() != api.apiKey.trim()) {
             delay(700)
             api.batchId = batch
-            keyStatus = "Checking API key..."
             try {
-                val count = api.verifyKey(apiKey)
-                api.apiKey = apiKey
-                subjects = api.list(api.get("/batch/${api.batchId}/subject"), "subjects")
+                val count = api.verifyKey(apiKey) { keyStatus = it }
+                api.apiKey = apiKey.trim()
                 keyStatus = "Verified · $count subjects found"
                 error = ""
+                showSettings = false
+                loadSubjects()
             } catch (e: Exception) {
                 keyStatus = e.message ?: "API key verification failed"
             }
@@ -883,7 +886,7 @@ private fun MineStudyApp() {
                     Text("API KEY", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
                     OutlinedTextField(
                         value = apiKey,
-                        onValueChange = { value -> apiKey = value; api.batchId = batch },
+                        onValueChange = { value -> apiKey = value; keyStatus = ""; api.batchId = batch },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
@@ -921,11 +924,11 @@ private fun MineStudyApp() {
                         Button(
                             onClick = {
                                 scope.launch {
-                                    keyStatus = "Verifying API key..."
                                     try {
-                                        val count = api.verifyKey(apiKey)
-                                        api.apiKey = apiKey
+                                        val count = api.verifyKey(apiKey) { keyStatus = it }
+                                        api.apiKey = apiKey.trim()
                                         keyStatus = "Verified · $count subjects found"
+                                        showSettings = false
                                         loadSubjects()
                                     } catch (e: Exception) { keyStatus = e.message ?: "API key verification failed" }
                                 }
@@ -952,15 +955,8 @@ private fun MineStudyApp() {
                     if (keyLink.isNotBlank()) Text(keyLink, style = MaterialTheme.typography.labelSmall, color = Color(0xFFB5A9FF), maxLines = 2)
                 }
             },
-            confirmButton = { TextButton(onClick = {
-                // Only persist a key that has passed activation and batch verification.
-                if (apiKey == api.apiKey) api.apiKey = apiKey
-                api.batchId = batch
-                showSettings = false
-                if (apiKey.isNotBlank()) loadSubjects()
-                else { screen = "home"; error = "Add an API key in Settings." }
-            }) { Text("Done") } },
-            dismissButton = { TextButton(onClick = { showSettings = false }) { Text("Cancel") } }
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showSettings = false }) { Text("Close") } }
         )
     }
 }
