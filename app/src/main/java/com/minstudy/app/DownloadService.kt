@@ -274,7 +274,17 @@ class DownloadService : Service() {
             pumpQueue()
             if (active.isEmpty() && pending.isEmpty()) {
                 val previous = mutableState.value
-                mutableState.value = previous.copy(active = false, paused = false, runningCount = 0, queuedCount = 0)
+                mutableState.value = previous.copy(
+                    active = false,
+                    paused = false,
+                    bytes = 0L,
+                    total = -1L,
+                    speed = 0L,
+                    runningCount = 0,
+                    queuedCount = 0,
+                    queueItems = emptyList()
+                )
+                updateNotification(completed = true)
                 stopForeground(STOP_FOREGROUND_DETACH)
                 foregroundStarted = false
                 stopSelf()
@@ -318,29 +328,43 @@ class DownloadService : Service() {
 
     private fun buildNotification(completed: Boolean = false, failed: Boolean = false): Notification {
         val s = mutableState.value
+        val activeItems = s.queueItems.filter { it.active }
+        val running = activeItems.count { !it.paused }
+        val queued = s.queueItems.count { !it.active }
+        val knownTotals = activeItems.filter { it.total > 0L }
+        val totalBytes = knownTotals.sumOf { it.total }
+        val downloadedBytes = knownTotals.sumOf { it.bytes.coerceAtMost(it.total) }
+        val hasAggregateProgress = activeItems.isNotEmpty() && knownTotals.size == activeItems.size && totalBytes > 0L
+        val percent = if (hasAggregateProgress) ((downloadedBytes * 100L) / totalBytes).toInt().coerceIn(0, 99) else 0
+        val title = when {
+            completed -> if (failed) "Download failed" else "Downloads finished"
+            running > 0 -> "Downloading $running file${if (running == 1) "" else "s"}"
+            activeItems.isNotEmpty() -> "Downloads paused"
+            queued > 0 -> "Downloads queued"
+            else -> "Preparing downloads"
+        }
+        val detail = when {
+            completed -> s.status
+            hasAggregateProgress -> "$percent% overall • ${human(downloadedBytes)} / ${human(totalBytes)} • $queued queued"
+            else -> "$running active • $queued queued"
+        }
         val openIntent = packageManager.getLaunchIntentForPackage(packageName)
         val content = openIntent?.let { PendingIntent.getActivity(this, 1, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
         val builder = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(if (completed) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_sys_download)
-            .setContentTitle(if (completed) if (failed) "Download failed" else "Download complete" else currentTitle)
+            .setContentTitle(title)
             .setSubText("Mine Study")
-            .setContentText(s.status)
+            .setContentText(detail)
             .setContentIntent(content)
             .setOnlyAlertOnce(true)
             .setOngoing(!completed)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-        if (!completed && s.total > 0L) {
-            val percent = ((s.bytes * 100L) / s.total).toInt().coerceIn(0, 100)
-            builder.setProgress(100, percent, false)
-                .setContentText("${percent}% • ${human(s.bytes)} / ${human(s.total)} • ${human(s.speed)}/s")
-        } else if (!completed) builder.setProgress(0, 0, true)
-        if (!completed) {
-            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel all", servicePending(ACTION_CANCEL, 3))
-        }
+        if (!completed && hasAggregateProgress) builder.setProgress(100, percent, false)
+        else if (!completed) builder.setProgress(0, 0, true)
+        if (!completed) builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel all", servicePending(ACTION_CANCEL, 3))
         return builder.build()
     }
-
     private fun servicePending(action: String, request: Int) =
         PendingIntent.getService(this, request, Intent(this, DownloadService::class.java).setAction(action),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
