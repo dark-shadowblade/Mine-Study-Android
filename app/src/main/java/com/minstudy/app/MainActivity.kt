@@ -220,11 +220,25 @@ private class StudyApi(private val context: Context) {
             // Not active for this batch yet; activate it before retrying.
         }
 
-        onStatus("Key not activated. Activating now...")
-        activateKey(candidate)
-        onStatus("Checking activated API key...")
-        val activatedResponse = get(subjectPath, candidate)
-        return list(activatedResponse, "subjects").size
+        onStatus("Key not active. Activating...")
+        try {
+            activateKey(candidate)
+        } catch (e: Exception) {
+            val detail = e.message?.takeIf { it.isNotBlank() }
+            throw IllegalStateException(
+                if (detail == null) "Key activation failed. Please generate a new API key."
+                else "Key activation failed. Please generate a new API key. ($detail)"
+            )
+        }
+        onStatus("Loading batch with activated key...")
+        return try {
+            val activatedResponse = get(subjectPath, candidate)
+            list(activatedResponse, "subjects").size
+        } catch (e: Exception) {
+            throw IllegalStateException(
+                "Key activation succeeded, but batch access failed. Please generate a new API key."
+            )
+        }
     }
 
     fun findString(value: Any?, names: Set<String>): String? {
