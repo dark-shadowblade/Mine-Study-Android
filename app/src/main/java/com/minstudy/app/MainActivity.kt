@@ -297,6 +297,14 @@ private fun MineStudyApp() {
     var screen by remember { mutableStateOf("home") }
     var type by remember { mutableStateOf("videos") }
     var subjects by remember { mutableStateOf(emptyList<StudyItem>()) }
+    var starredSubjectIds by remember(batch) {
+        mutableStateOf(progressPrefs.getStringSet("starred_subjects_$batch", emptySet())?.toSet() ?: emptySet())
+    }
+    fun toggleSubjectStar(subject: StudyItem) {
+        val updated = if (subject.id in starredSubjectIds) starredSubjectIds - subject.id else starredSubjectIds + subject.id
+        starredSubjectIds = updated
+        progressPrefs.edit().putStringSet("starred_subjects_$batch", updated.toSet()).apply()
+    }
     var chapters by remember { mutableStateOf(emptyList<StudyItem>()) }
     var contents by remember { mutableStateOf(emptyList<StudyItem>()) }
     var lectureResources by remember { mutableStateOf(emptyList<LectureResource>()) }
@@ -647,12 +655,15 @@ private fun MineStudyApp() {
                             ItemList(
                                 " ", subjects, busy, error,
                                 actionLabel = "Open",
+                                showSubjectStars = true,
+                                starredSubjectIds = starredSubjectIds,
+                                onToggleStar = ::toggleSubjectStar,
                                 onSelect = { loadChapters(it) },
                                 onRetry = {}
                             )
                         }
                     }
-                    "subjects" -> ItemList("Subjects", subjects, busy, error, onSelect = { loadChapters(it) }, onRetry = { loadSubjects() })
+                    "subjects" -> ItemList("Subjects", subjects, busy, error, showSubjectStars = true, starredSubjectIds = starredSubjectIds, onToggleStar = ::toggleSubjectStar, onSelect = { loadChapters(it) }, onRetry = { loadSubjects() })
                     "chapters" -> {
                         Text(selectedSubject?.title ?: "Chapters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         ItemList("Chapters", chapters, busy, error, onSelect = { loadContents(it) }, onRetry = { selectedSubject?.let { s -> loadChapters(s) } })
@@ -928,11 +939,17 @@ private fun ItemList(
     downloadItemKey: (StudyItem) -> String = { it.id },
     activeDownloadPercent: Int = 0,
     onDownload: ((StudyItem) -> Unit)? = null,
+    showSubjectStars: Boolean = false,
+    starredSubjectIds: Set<String> = emptySet(),
+    onToggleStar: (StudyItem) -> Unit = {},
     onSelect: (StudyItem) -> Unit, onRetry: () -> Unit
  ) {
     var searchQuery by remember(heading) { mutableStateOf("") }
     val searchable = heading == "Chapters" || showThumbnails
-    val visibleItems = remember(items, searchQuery) { if (searchQuery.isBlank()) items else items.filter { it.title.contains(searchQuery.trim(), ignoreCase = true) } }
+    val visibleItems = remember(items, searchQuery, starredSubjectIds, showSubjectStars) {
+        val filtered = if (searchQuery.isBlank()) items else items.filter { it.title.contains(searchQuery.trim(), ignoreCase = true) }
+        if (showSubjectStars) filtered.sortedByDescending { it.id in starredSubjectIds } else filtered
+    }
     Text(heading, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     if (searchable) {
         Spacer(Modifier.height(6.dp))
@@ -983,6 +1000,17 @@ private fun ItemList(
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                             Text(item.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge, maxLines = 3)
                             if (item.subtitle.isNotBlank()) Text(item.subtitle, color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                        }
+                        if (showSubjectStars) {
+                            val isStarred = item.id in starredSubjectIds
+                            IconButton(onClick = { onToggleStar(item) }, modifier = Modifier.size(38.dp)) {
+                                Icon(
+                                    imageVector = if (isStarred) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = if (isStarred) "Remove from important subjects" else "Mark subject important",
+                                    tint = if (isStarred) Color(0xFFFFC857) else Color(0xFF858B98),
+                                    modifier = Modifier.size(23.dp)
+                                )
+                            }
                         }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
