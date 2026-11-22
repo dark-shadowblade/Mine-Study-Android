@@ -36,7 +36,8 @@ data class DownloadUiState(
     val itemKey: String = "",
     val runningCount: Int = 0,
     val queuedCount: Int = 0,
-    val queueItems: List<DownloadQueueEntry> = emptyList()
+    val queueItems: List<DownloadQueueEntry> = emptyList(),
+    val maxParallel: Int = 3
 )
 
 class DownloadService : Service() {
@@ -102,6 +103,8 @@ class DownloadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        maxParallel = getSharedPreferences("download_manager_settings", MODE_PRIVATE).getInt("parallel_limit", 3).coerceIn(1, 5)
+        mutableState.value = mutableState.value.copy(maxParallel = maxParallel)
         if (Build.VERSION.SDK_INT >= 26) {
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel(CHANNEL, "Study downloads", NotificationManager.IMPORTANCE_LOW).apply {
