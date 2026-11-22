@@ -288,6 +288,24 @@ private fun MineStudyApp() {
         }
     }
 
+    // Pasting a key saves it immediately and verifies it automatically.
+    LaunchedEffect(apiKey, batch, showSettings) {
+        if (showSettings && apiKey.isNotBlank()) {
+            delay(700)
+            api.batchId = batch
+            keyStatus = "Checking API key..."
+            try {
+                val count = api.verifyKey(apiKey)
+                api.apiKey = apiKey
+                subjects = api.list(api.get("/batch/${api.batchId}/subject"), "subjects")
+                keyStatus = "Verified · $count subjects found"
+                error = ""
+            } catch (e: Exception) {
+                keyStatus = e.message ?: "API key verification failed"
+            }
+        }
+    }
+
     fun loadChapters(subject: StudyItem) {
         if (selectedSubject?.id == subject.id && chapters.isNotEmpty()) {
             screen = "chapters"
@@ -926,7 +944,7 @@ private fun VideoScreen(
                 onValueChangeFinished = { player.seekTo(positionMs); isScrubbing = false },
                 valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
                 enabled = durationMs > 0L,
-                modifier = Modifier.fillMaxWidth().height(if (compact) 18.dp else 22.dp)
+                modifier = Modifier.fillMaxWidth().height(if (compact) 16.dp else 20.dp)
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(formatTime(positionMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
@@ -937,7 +955,7 @@ private fun VideoScreen(
 
     @Composable
     fun PlayerOverlay(landscape: Boolean) {
-        val iconSize = if (landscape) 34.dp else 27.dp
+        val iconSize = if (landscape) 28.dp else 23.dp
         Column(
             Modifier.fillMaxSize()
                 .background(Color(0x66000000))
@@ -945,7 +963,7 @@ private fun VideoScreen(
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { if (landscape) fullScreen = false else onBack() }, modifier = Modifier.size(38.dp)) {
+                IconButton(onClick = { if (landscape) fullScreen = false else onBack() }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
                 }
                 Text(title, color = Color.White, maxLines = 1, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
@@ -954,7 +972,7 @@ private fun VideoScreen(
                         when {
                             isDownloading -> Box(contentAlignment = Alignment.Center) {
                                 CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
-                                Text("$downloadPercent%", color = Color.White, fontSize = 7.sp)
+                                Text("$downloadPercent%", color = Color.White, fontSize = 9.sp)
                             }
                             isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879))
                             else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFFB8BEC9))
@@ -977,7 +995,7 @@ private fun VideoScreen(
 
             if (landscape) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.size(52.dp)) {
+                    IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.size(42.dp)) {
                         Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(iconSize))
                     }
                     Spacer(Modifier.width(22.dp))
@@ -987,10 +1005,10 @@ private fun VideoScreen(
                             else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
                             else player.play()
                         },
-                        modifier = Modifier.size(62.dp),
+                        modifier = Modifier.size(50.dp), 
                         colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
                     ) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(36.dp))
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(32.dp))
                     }
                     Spacer(Modifier.width(22.dp))
                     IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)) }, modifier = Modifier.size(52.dp)) {
@@ -1009,7 +1027,7 @@ private fun VideoScreen(
                             else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
                             else player.play()
                         },
-                        modifier = Modifier.size(48.dp),
+                        modifier = Modifier.size(42.dp), 
                         colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
                     ) {
                         Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(28.dp))
@@ -1039,7 +1057,7 @@ private fun VideoScreen(
                             audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
                         },
                         valueRange = 0f..maxVolume.toFloat(),
-                        modifier = Modifier.weight(1f).height(18.dp)
+                        modifier = Modifier.weight(1f).height(16.dp)
                     )
                     Text(if (volume == 0) "Muted" else "Volume", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall)
                 }
@@ -1124,7 +1142,7 @@ private fun VideoScreen(
                     when {
                         isDownloading -> Box(contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(Modifier.size(23.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
-                            Text("$downloadPercent%", fontSize = 7.sp, color = Color.White)
+                            Text("$downloadPercent%", fontSize = 9.sp, color = Color.White)
                         }
                         isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(23.dp))
                         else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFF858B98), modifier = Modifier.size(23.dp))
