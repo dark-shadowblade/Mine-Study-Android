@@ -342,7 +342,7 @@ private fun MineStudyApp() {
             pendingDownloadCategory = ""
             pendingDownloadKey = ""
         }
-        if (downloadState.status.startsWith("Download complete")) {
+        if (downloadState.status.startsWith("Download complete") || downloadState.status.startsWith("Completed")) {
             downloadRecords = DownloadRepository.list(context)
         }
     }
