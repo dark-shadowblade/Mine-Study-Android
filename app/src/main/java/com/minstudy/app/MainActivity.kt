@@ -189,6 +189,8 @@ private class StudyApi(private val context: Context) {
 
     suspend fun activateKey(candidate: String) {
         if (candidate.isBlank()) throw IllegalStateException("Enter an API key first")
+        // A saved key has already completed activation; do not activate it again.
+        if (candidate.trim() == apiKey) return
         // Activation is a first-party server operation. Do not send an existing
         // x-api-key header; the candidate is supplied only as the encoded query parameter.
         val response = get("/auth/activate?key=${enc(candidate)}", "", unwrapData = false) as? JSONObject
@@ -497,8 +499,7 @@ private fun MineStudyApp() {
                 screen = "contents"
             } catch (e: Exception) {
                 error = e.message ?: "Could not resume your last chapter"
-            } finally { busy = false }
-        }
+            } finally { busy = false }        }
     }
 
     fun goBack() {
@@ -725,7 +726,7 @@ private fun MineStudyApp() {
             },
             text = {
                 Column(
-                    Modifier.fillMaxWidth().heightIn(max = 430.dp),
+                    Modifier.fillMaxWidth().heightIn(max = 350.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text("SERVER", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
@@ -762,7 +763,7 @@ private fun MineStudyApp() {
                         ),
                         placeholder = { Text("Paste your API key", style = MaterialTheme.typography.bodySmall) }
                     )
-                    Text("Stored securely on this device · Expires after 24 hours", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                    Text("Key expires after 24 hours", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = {
@@ -815,7 +816,8 @@ private fun MineStudyApp() {
                 }
             },
             confirmButton = { TextButton(onClick = {
-                api.apiKey = apiKey
+                // Only persist a key that has passed activation and batch verification.
+                if (apiKey == api.apiKey) api.apiKey = apiKey
                 api.batchId = batch
                 showSettings = false
                 if (apiKey.isNotBlank()) loadSubjects()
@@ -997,8 +999,8 @@ private fun VideoScreen(
     var buffering by remember { mutableStateOf(true) }
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
-    var isScrubbing by remember { mutableStateOf(false) }
-    var playerError by remember { mutableStateOf("") }
+    var showRemainingTime by remember { mutableStateOf(false) }
+    var isScrubbing by remember { mutableStateOf(false) }    var playerError by remember { mutableStateOf("") }
     val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
     var volume by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
@@ -1093,30 +1095,31 @@ private fun VideoScreen(
     @Composable
     fun SpeedPicker() {
         Box {
-            TextButton(onClick = { speedMenu = !speedMenu }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                Text(if (playbackSpeed == 1f) "1×" else "${playbackSpeed}×", color = Color.White, fontWeight = FontWeight.SemiBold)
+            TextButton(onClick = { speedMenu = true }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp), modifier = Modifier.height(34.dp)) {
+                Text("${playbackSpeed}×", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             }
-            if (speedMenu) {
-                Surface(
-                    modifier = Modifier.align(Alignment.TopEnd).offset(y = 38.dp).width(104.dp),
-                    color = Color(0xF0202020), shape = RoundedCornerShape(10.dp), shadowElevation = 8.dp
-                ) {
-                    Column(Modifier.heightIn(max = 260.dp)) {
-                        listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 3.5f, 4f).forEach { speed ->
-                            Text(
-                                text = (if (speed == playbackSpeed) "✓  " else "    ") + "${speed}×",
-                                color = Color.White, style = MaterialTheme.typography.labelLarge,
-                                modifier = Modifier.fillMaxWidth().clickable { setSpeed(speed) }.padding(horizontal = 12.dp, vertical = 7.dp)
-                            )
-                        }
-                        Text("Custom…", color = Color(0xFFC5B9FF), style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                speedText = playbackSpeed.toString()
-                                speedMenu = false
-                                speedDialog = true
-                            }.padding(horizontal = 12.dp, vertical = 8.dp))
-                    }
+            DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }, modifier = Modifier.background(Color(0xFF171C28))) {
+                listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 3.5f, 4f).forEach { speed ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("${speed}×", color = Color.White)
+                                if (speed == playbackSpeed) Text("✓", color = Color(0xFF9B8CFF))
+                            }
+                        },
+                        onClick = { setSpeed(speed) },
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp)
+                    )
                 }
+                HorizontalDivider(color = Color(0xFF303747))
+                DropdownMenuItem(
+                    text = { Text("Custom speed…", color = Color(0xFFC5B9FF)) },
+                    onClick = {
+                        speedText = playbackSpeed.toString()
+                        speedMenu = false
+                        speedDialog = true
+                    }
+                )
             }
         }
     }
@@ -1202,16 +1205,19 @@ private fun VideoScreen(
                         Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(iconSize))
                     }
                     Spacer(Modifier.width(22.dp))
-                    FilledIconButton(
-                        onClick = {
-                            if (player.isPlaying) player.pause()
-                            else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
-                            else player.play()
-                        },
-                        modifier = Modifier.size(50.dp), 
-                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
-                    ) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(32.dp))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        if (buffering && playerError.isBlank()) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color.White)
+                        FilledIconButton(
+                            onClick = {
+                                if (player.isPlaying) player.pause()
+                                else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
+                                else player.play()
+                            },
+                            modifier = Modifier.size(50.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
+                        ) {
+                            Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(32.dp))
+                        }
                     }
                     Spacer(Modifier.width(22.dp))
                     IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)) }, modifier = Modifier.size(52.dp)) {
@@ -1224,16 +1230,19 @@ private fun VideoScreen(
                         Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White, modifier = Modifier.size(iconSize))
                     }
                     Spacer(Modifier.width(16.dp))
-                    FilledIconButton(
-                        onClick = {
-                            if (player.isPlaying) player.pause()
-                            else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
-                            else player.play()
-                        },
-                        modifier = Modifier.size(42.dp), 
-                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
-                    ) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(28.dp))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        if (buffering && playerError.isBlank()) CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 1.8.dp, color = Color.White)
+                        FilledIconButton(
+                            onClick = {
+                                if (player.isPlaying) player.pause()
+                                else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
+                                else player.play()
+                            },
+                            modifier = Modifier.size(42.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
+                        ) {
+                            Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(28.dp))
+                        }
                     }
                     Spacer(Modifier.width(16.dp))
                     IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)) }, modifier = Modifier.size(40.dp)) {
@@ -1247,7 +1256,12 @@ private fun VideoScreen(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text(formatTime(positionMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
                     Text("/", color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.labelSmall)
-                    Text(formatTime(durationMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text(
+                        if (showRemainingTime) "-${formatTime((durationMs - positionMs).coerceAtLeast(0L))}" else formatTime(durationMs),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { showRemainingTime = !showRemainingTime }.padding(horizontal = 3.dp, vertical = 2.dp)
+                    )
                     Spacer(Modifier.weight(1f))
                     IconButton(onClick = { volumePanel = !volumePanel }, modifier = Modifier.size(32.dp)) {
                         Icon(
@@ -1264,7 +1278,7 @@ private fun VideoScreen(
                                 audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
                             },
                             valueRange = 0f..maxVolume.toFloat(),
-                            modifier = Modifier.width(104.dp).height(24.dp),
+                            modifier = Modifier.width(92.dp).height(18.dp),
                             colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.35f))
                         )
                     }
@@ -1276,14 +1290,39 @@ private fun VideoScreen(
     if (speedDialog) {
         AlertDialog(
             onDismissRequest = { speedDialog = false },
-            title = { Text("Custom playback speed") },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = Color(0xFF171C28),
+            title = { Text("Playback speed", fontWeight = FontWeight.SemiBold) },
             text = {
-                OutlinedTextField(
-                    value = speedText,
-                    onValueChange = { speedText = it.filter { ch -> ch.isDigit() || ch == '.' }.take(5) },
-                    singleLine = true,
-                    label = { Text("0.25× to 4×") }
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Fine-tune from 0.25× to 4×", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                val value = speedText.toFloatOrNull() ?: playbackSpeed
+                                speedText = "%.2f".format(java.util.Locale.US, (value - 0.05f).coerceAtLeast(0.25f)).trimEnd('0').trimEnd('.')
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier.sizeIn(minWidth = 44.dp)
+                        ) { Text("−", fontSize = 20.sp) }
+                        OutlinedTextField(
+                            value = speedText,
+                            onValueChange = { speedText = it.filter { ch -> ch.isDigit() || ch == '.' }.take(5) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            textStyle = MaterialTheme.typography.titleMedium,
+                            label = { Text("Speed ×") }
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                val value = speedText.toFloatOrNull() ?: playbackSpeed
+                                speedText = "%.2f".format(java.util.Locale.US, (value + 0.05f).coerceAtMost(4f)).trimEnd('0').trimEnd('.')
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier.sizeIn(minWidth = 44.dp)
+                        ) { Text("+", fontSize = 20.sp) }
+                    }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
