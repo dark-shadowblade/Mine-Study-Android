@@ -97,6 +97,7 @@ private const val BATCH_ONE = "6a0eb0a7f33c042849418636"
 private const val BATCH_TWO = "6a0eaf70f4ae45d1901b7196"
 
 data class StudyItem(val id: String, val title: String, val subtitle: String = "", val raw: JSONObject = JSONObject())
+data class LectureResource(val item: StudyItem, val isDpp: Boolean)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -286,6 +287,8 @@ private fun MineStudyApp() {
     var subjects by remember { mutableStateOf(emptyList<StudyItem>()) }
     var chapters by remember { mutableStateOf(emptyList<StudyItem>()) }
     var contents by remember { mutableStateOf(emptyList<StudyItem>()) }
+    var lectureResources by remember { mutableStateOf(emptyList<LectureResource>()) }
+    var resourcesLoading by remember { mutableStateOf(false) }
     var selectedSubject by remember { mutableStateOf<StudyItem?>(null) }
     var selectedChapter by remember { mutableStateOf<StudyItem?>(null) }
     var currentVideo by remember { mutableStateOf("") }
@@ -441,6 +444,49 @@ private fun MineStudyApp() {
         }
     }
 
+    fun loadLectureResources(lecture: StudyItem) {
+        val chapter = selectedChapter ?: return
+        val subject = selectedSubject ?: return
+        lectureResources = emptyList()
+        resourcesLoading = true
+        scope.launch {
+            try {
+                val base = "/batch/${api.batchId}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type="
+                val noteItems = api.list(api.get(base + "notes"), "contents")
+                val dppItems = api.list(api.get(base + "DppNotes"), "contents")
+                val lectureNo = lectureNumber(lecture.title)
+                lectureResources = if (lectureNo == null) emptyList() else {
+                    noteItems.filter { resourceMatchesLecture(it.title, lectureNo) }
+                        .map { LectureResource(it, false) } +
+                    dppItems.filter { resourceMatchesLecture(it.title, lectureNo) }
+                        .map { LectureResource(it, true) }
+                }
+            } catch (_: Exception) {
+                lectureResources = emptyList()
+            } finally {
+                resourcesLoading = false
+            }
+        }
+    }
+
+    fun openLectureResource(resource: LectureResource) {
+        val category = if (resource.isDpp) "DPP" else "Notes"
+        val item = resource.item
+        val cleanTitle = item.title.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim()
+        val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}"
+        val localCopy = downloadRecords.firstOrNull { record ->
+            record.category == category && (record.itemKey == itemKey ||
+                (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true))) &&
+                record.mime == "application/pdf"
+        }
+        if (localCopy != null) openLocalDocument(context, Uri.parse(localCopy.uri))
+        else {
+            val url = item.raw.optString("baseUrl").takeIf { it.startsWith("http", true) }
+            if (url != null) openExternal(context, url)
+            else Toast.makeText(context, "No document link found for this resource", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     fun playLecture(index: Int) {
         val item = contents.getOrNull(index) ?: return
         val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
@@ -458,6 +504,7 @@ private fun MineStudyApp() {
             currentTitle = item.title
             currentItemIndex = index
             downloadRecords = DownloadRepository.list(context)
+            loadLectureResources(item)
             screen = "player"
             return
         }
@@ -473,6 +520,7 @@ private fun MineStudyApp() {
                 currentVideo = stream
                 currentTitle = item.title
                 currentItemIndex = index
+                loadLectureResources(item)
                 screen = "player"
             } catch (e: Exception) {
                 error = e.message ?: "Unable to open lesson"
@@ -675,6 +723,9 @@ private fun MineStudyApp() {
                         onPrevious = { playLecture(currentItemIndex + 1) },
                         onNext = { playLecture(currentItemIndex - 1) },
                         onBack = { screen = "contents" },
+                        resources = lectureResources,
+                        resourcesLoading = resourcesLoading,
+                        onOpenResource = { resource -> openLectureResource(resource) },
                         isDownloaded = downloadRecords.any { record ->
                             record.category == (if (type == "DppVideos") "DPP Videos" else "Lectures") &&
                                 (record.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}" ||
@@ -989,13 +1040,17 @@ private fun VideoScreen(
     isDownloaded: Boolean = false,
     isDownloading: Boolean = false,
     downloadPercent: Int = 0,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    resources: List<LectureResource> = emptyList(),
+    resourcesLoading: Boolean = false,
+    onOpenResource: (LectureResource) -> Unit = {}
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
     val playbackPrefs = remember { context.getSharedPreferences("mine_study_playback", Context.MODE_PRIVATE) }
     val savedPositionKey = remember(playbackKey) { "position_$playbackKey" }
     var fullScreen by remember { mutableStateOf(false) }
+    var showResources by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
     var controlsLocked by remember { mutableStateOf(false) }
     var speedMenu by remember { mutableStateOf(false) }
@@ -1197,6 +1252,11 @@ private fun VideoScreen(
                 }
                 Text(title, color = Color.White, maxLines = 1, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 if (landscape) {
+                    TextButton(onClick = { showResources = true }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
+                        Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(17.dp), tint = Color.White)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Resources", color = Color.White, fontSize = 12.sp)
+                    }
                     IconButton(onClick = onDownload, enabled = !isDownloaded && !isDownloading, modifier = Modifier.size(38.dp)) {
                         when {
                             isDownloading -> Box(contentAlignment = Alignment.Center) {
@@ -1460,6 +1520,24 @@ private fun VideoScreen(
                 Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
                     .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 9.dp))
             } else if (showControls) PlayerOverlay(landscape = true)
+            if (showResources) {
+                Box(Modifier.fillMaxSize().background(Color(0x99000000)).clickable { showResources = false }) {
+                    Card(
+                        Modifier.align(Alignment.CenterEnd).fillMaxHeight().widthIn(min = 270.dp, max = 390.dp)
+                            .fillMaxWidth(0.42f).clickable { },
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF111722)),
+                        shape = RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)
+                    ) {
+                        Column(Modifier.fillMaxSize().padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Resources", modifier = Modifier.weight(1f), color = Color.White, fontWeight = FontWeight.Bold)
+                                IconButton(onClick = { showResources = false }) { Icon(Icons.Default.ArrowBack, "Close resources", tint = Color.White) }
+                            }
+                            ResourceSection(resources, resourcesLoading, onOpenResource, Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
             if (playerError.isNotBlank()) {
                 TextButton(onClick = { playerError = ""; player.prepare(); player.play() }, modifier = Modifier.align(Alignment.TopEnd)) {
                     Text("Retry", color = Color.White)
@@ -1582,8 +1660,89 @@ private fun VideoScreen(
                 TextButton(onClick = onNext, enabled = hasNext) { Text("Next"); Icon(Icons.Default.SkipNext, null) }
             }
             if (playerError.isNotBlank()) Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
+            ResourceSection(resources, resourcesLoading, onOpenResource)
         }
     }
+}
+
+@Composable
+private fun ResourceSection(
+    resources: List<LectureResource>,
+    loading: Boolean,
+    onOpen: (LectureResource) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier.fillMaxWidth()
+            .background(Color(0xFF141A26), RoundedCornerShape(14.dp))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.MenuBook, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(7.dp))
+            Text("Resources", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            if (loading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+        }
+        if (!loading && resources.isEmpty()) {
+            Text("No resources available for this lecture.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+        } else if (resources.isNotEmpty()) {
+            val notes = resources.filterNot { it.isDpp }
+            val dpp = resources.filter { it.isDpp }
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 190.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                if (notes.isNotEmpty()) {
+                    item { Text("NOTES", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
+                    items(notes, key = { "note_${it.item.id}" }) { resource ->
+                        ResourceRow(resource, onOpen)
+                    }
+                }
+                if (dpp.isNotEmpty()) {
+                    item { Text("DPP", color = Color(0xFF71D6C5), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
+                    items(dpp, key = { "dpp_${it.item.id}" }) { resource ->
+                        ResourceRow(resource, onOpen)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResourceRow(resource: LectureResource, onOpen: (LectureResource) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
+            .background(Color(0xFF202838)).clickable { onOpen(resource) }
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Default.FolderOpen, null, tint = if (resource.isDpp) Color(0xFF71D6C5) else Color(0xFFB5A9FF), modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(9.dp))
+        Text(resource.item.title, modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+        Icon(Icons.Default.ArrowForward, null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+    }
+}
+
+private fun lectureNumber(title: String): Int? {
+    val explicit = Regex("(?i)\\b(?:lecture|lec)\\s*0*(\\d+)").find(title)?.groupValues?.getOrNull(1)?.toIntOrNull()
+    if (explicit != null) return explicit
+    return Regex("(?<!\\d)0*(\\d+)\\s*:").find(title)?.groupValues?.getOrNull(1)?.toIntOrNull()
+}
+
+private fun resourceMatchesLecture(title: String, lectureNo: Int): Boolean {
+    val patterns = listOf(
+        Regex("(?i)\\bof\\s+(?:lecture|lec)\\s*0*(\\d+)"),
+        Regex("(?i)\\b(?:lecture|lec)\\s*0*(\\d+)"),
+        Regex("(?i)\\b0*(\\d+)\\s*:\\s*(?:daily\\s+class\\s+notes|class\\s+notes)\\b"),
+        Regex("(?i)\\bMains\\s+Questions?\\s*0*(\\d+)"),
+        Regex("(?i)\\bDPP\\s+of\\s+Lec\\s*0*(\\d+)")
+    )
+    val number = patterns.firstNotNullOfOrNull { pattern ->
+        pattern.find(title)?.groupValues?.getOrNull(1)?.toIntOrNull()
+    }
+    return number == lectureNo
 }
 
 private fun formatTime(ms: Long): String {
