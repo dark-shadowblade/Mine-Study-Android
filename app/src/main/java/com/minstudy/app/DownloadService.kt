@@ -198,7 +198,7 @@ class DownloadService : Service() {
             return
         }
         val duplicate = pending.any { it.itemKey == task.itemKey && it.itemKey.isNotBlank() } ||
-            active.values.any { it.first.itemKey == task.itemKey && it.itemKey.isNotBlank() }
+            active.values.any { it.first.itemKey == task.itemKey && it.first.itemKey.isNotBlank() }
         if (duplicate) return
         pending.addLast(task)
         if (!foregroundStarted) {
@@ -264,7 +264,8 @@ class DownloadService : Service() {
         } catch (e: CancellationException) {
             refreshQueueState("Cancelled • ${task.title}")
         } catch (e: Exception) {
-            refreshQueueState("Failed • ${task.title}: ${e.message ?: "Network error"}")
+            val reason = e.message ?: "Network error"
+            refreshQueueState("Failed • ${task.title}: $reason")
         } finally {
             active.remove(id)
             resumeRequested.remove(id)
