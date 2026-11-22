@@ -597,8 +597,7 @@ private fun MineStudyApp() {
                             listOf("videos" to "Lectures", "notes" to "Notes", "DppNotes" to "DPP", "DppVideos" to "DPP videos").forEach { (key, label) ->
                                 FilterChip(selected = type == key, onClick = { selectedChapter?.let { loadContents(it, key) } }, label = { Text(label, fontSize = 11.sp) })
                             }
-                        }
-                        ItemList(
+                        }                        ItemList(
                             "Learning material", contents, busy, error,
                             showThumbnails = true,
                             actionLabel = if (type == "videos" || type == "DppVideos") "Play" else "Open PDF",
@@ -996,9 +995,13 @@ private fun VideoScreen(
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(true) }
-    var positionMs by remember { mutableLongStateOf(0L) }    var durationMs by remember { mutableLongStateOf(0L) }
-    var showRemainingTime by remember { mutableStateOf(false) }    var isScrubbing by remember { mutableStateOf(false) }    var playerError by remember { mutableStateOf("") }
-    val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }    val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    var positionMs by remember { mutableLongStateOf(0L) }
+    var durationMs by remember { mutableLongStateOf(0L) }
+    var showRemainingTime by remember { mutableStateOf(false) }
+    var isScrubbing by remember { mutableStateOf(false) }
+    var playerError by remember { mutableStateOf("") }
+    val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
     var volume by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
     var volumePanel by remember { mutableStateOf(false) }
     var previousVolume by remember { mutableIntStateOf(volume.coerceAtLeast(1)) }
@@ -1197,8 +1200,7 @@ private fun VideoScreen(
                     }
                 }
                 SpeedPicker()
-                IconButton(onClick = {
-                    controlsLocked = true
+                IconButton(onClick = {                    controlsLocked = true
                     showControls = false
                 }, modifier = Modifier.size(38.dp)) {
                     Icon(Icons.Default.Lock, "Lock controls", tint = Color.White)
