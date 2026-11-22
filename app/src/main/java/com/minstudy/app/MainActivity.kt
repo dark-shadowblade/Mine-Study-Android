@@ -803,7 +803,8 @@ private fun MineStudyApp() {
                         },
                         isDownloaded = downloadRecords.any { record ->
                             record.category == (if (type == "DppVideos") "DPP Videos" else "Lectures") &&
-                                (record.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}" ||
+                                (record.uri == currentVideo ||
+                                    (currentItemIndex >= 0 && record.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}") ||
                                     (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(currentTitle.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim(), true)))
                         },
                         downloadPercent = if (downloadState.active && downloadState.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}" && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
@@ -822,6 +823,7 @@ private fun MineStudyApp() {
                         onSetParallel = { DownloadService.setParallelLimit(context, it) },
                         onPause = { DownloadService.pauseItem(context, it) },
                         onResume = { DownloadService.resumeItem(context, it) },
+                        onCancelItem = { DownloadService.cancelItem(context, it) },
                         onMove = { id, direction -> DownloadService.moveQueued(context, id, direction) },
                         onRemove = { DownloadService.removeQueued(context, it) },
                         onCancelAll = { DownloadService.cancel(context) },
