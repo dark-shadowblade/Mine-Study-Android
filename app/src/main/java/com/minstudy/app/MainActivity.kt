@@ -220,8 +220,11 @@ private class StudyApi(private val context: Context) {
         val batches = (0 until array.length()).mapNotNull { index ->
             val item = array.optJSONObject(index) ?: return@mapNotNull null
             val id = item.optString("_id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            // Batch search v2 exposes the official card artwork as previewImage.
+            val previewImage = item.optString("previewImage").trim()
+                .takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) }
             val thumbnailKeys = listOf(
-                "thumbnail", "thumbnailurl", "thumbnail_url", "thumb", "thumburl", "thumb_url",
+                "previewImage", "thumbnail", "thumbnailurl", "thumbnail_url", "thumb", "thumburl", "thumb_url",
                 "image", "imageurl", "image_url", "coverimage", "cover_image", "cover", "banner",
                 "bannerimage", "banner_image", "batchimage", "batch_image", "logo", "photo",
                 "photourl", "photo_url", "poster", "avatar", "picture"
@@ -250,7 +253,7 @@ private class StudyApi(private val context: Context) {
                 }
                 return null
             }
-            val thumbnail = findImage(item).orEmpty()
+            val thumbnail = previewImage ?: findImage(item).orEmpty()
             BatchInfo(id, item.optString("name", "Unnamed batch"), item.optString("lang", ""), item.optString("class", ""), thumbnail)
         }
         return batches to (payload.optJSONObject("pagination")?.optInt("totalPages", 1)?.coerceAtLeast(1) ?: 1)
