@@ -23,6 +23,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -737,6 +738,18 @@ private fun MineStudyApp() {
                         resources = lectureResources,
                         resourcesLoading = resourcesLoading,
                         onOpenResource = { resource -> openLectureResource(resource) },
+                        downloadRecords = downloadRecords,
+                        resourceItemKey = { resource -> "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${resource.item.id}" },
+                        activeResourceDownloadKey = if (downloadState.active) downloadState.itemKey else pendingDownloadKey,
+                        activeResourceDownloadCategory = if (downloadState.active) downloadState.category else pendingDownloadCategory,
+                        resourceDownloadPercent = if (downloadState.active && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
+                        onDownloadResource = { resource ->
+                            val category = if (resource.isDpp) "DPP" else "Notes"
+                            val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${resource.item.id}"
+                            startDownload(resource.item.title, category, false, itemKey) {
+                                resource.item.raw.optString("baseUrl").takeIf { it.startsWith("http", true) }
+                            }
+                        },
                         isDownloaded = downloadRecords.any { record ->
                             record.category == (if (type == "DppVideos") "DPP Videos" else "Lectures") &&
                                 (record.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}" ||
@@ -1054,7 +1067,13 @@ private fun VideoScreen(
     onDownload: () -> Unit,
     resources: List<LectureResource> = emptyList(),
     resourcesLoading: Boolean = false,
-    onOpenResource: (LectureResource) -> Unit = {}
+    onOpenResource: (LectureResource) -> Unit = {},
+    onDownloadResource: (LectureResource) -> Unit = {},
+    downloadRecords: List<DownloadRecord> = emptyList(),
+    resourceItemKey: (LectureResource) -> String = { it.item.id },
+    activeResourceDownloadKey: String = "",
+    activeResourceDownloadCategory: String = "",
+    resourceDownloadPercent: Int = 0
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -1070,6 +1089,7 @@ private fun VideoScreen(
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(true) }
+    var bufferingVisible by remember { mutableStateOf(false) }
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var showRemainingTime by remember { mutableStateOf(false) }
@@ -1151,6 +1171,11 @@ private fun VideoScreen(
             isPlaying = player.isPlaying
             buffering = player.playbackState == com.google.android.exoplayer2.Player.STATE_BUFFERING
         }
+    }
+
+    LaunchedEffect(buffering) {
+        if (buffering) { delay(180); bufferingVisible = true }
+        else bufferingVisible = false
     }
 
     DisposableEffect(fullScreen) {
@@ -1299,7 +1324,8 @@ private fun VideoScreen(
                     }
                     Spacer(Modifier.width(22.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        if (buffering && playerError.isBlank()) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color.White)
+                        if (bufferingVisible && playerError.isBlank()) CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp, color = Color.White)
+                        if (bufferingVisible && playerError.isBlank()) Spacer(Modifier.height(7.dp))
                         FilledIconButton(
                             onClick = {
                                 if (player.isPlaying) player.pause()
@@ -1324,7 +1350,8 @@ private fun VideoScreen(
                     }
                     Spacer(Modifier.width(16.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        if (buffering && playerError.isBlank()) CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 1.8.dp, color = Color.White)
+                        if (bufferingVisible && playerError.isBlank()) CircularProgressIndicator(Modifier.size(25.dp), strokeWidth = 2.5.dp, color = Color.White)
+                        if (bufferingVisible && playerError.isBlank()) Spacer(Modifier.height(6.dp))
                         FilledIconButton(
                             onClick = {
                                 if (player.isPlaying) player.pause()
@@ -1493,6 +1520,28 @@ private fun VideoScreen(
                         )
                     }
             .pointerInput(player, controlsLocked) {
+                var speedSwipeDistance = 0f
+                detectTransformGestures { _, pan, _, _ ->
+                    if (!controlsLocked && kotlin.math.abs(pan.y) > 0.5f) {
+                        speedSwipeDistance += -pan.y
+                        while (speedSwipeDistance >= 28f) {
+                            setSpeed(playbackSpeed + 0.05f)
+                            speedSwipeDistance -= 28f
+                            gestureLabel = "Speed"
+                            gestureValue = String.format(java.util.Locale.US, "%.2f×", playbackSpeed)
+                            gestureActive = true
+                        }
+                        while (speedSwipeDistance <= -28f) {
+                            setSpeed(playbackSpeed - 0.05f)
+                            speedSwipeDistance += 28f
+                            gestureLabel = "Speed"
+                            gestureValue = String.format(java.util.Locale.US, "%.2f×", playbackSpeed)
+                            gestureActive = true
+                        }
+                    }
+                }
+            }
+            .pointerInput(player, controlsLocked) {
             detectTapGestures(
                 onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
                 onDoubleTap = { offset ->
@@ -1519,8 +1568,11 @@ private fun VideoScreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Icon(
-                        if (gestureLabel == "Brightness") Icons.Default.Brightness6
-                        else if (volume == 0) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
+                        when (gestureLabel) {
+                            "Brightness" -> Icons.Default.Brightness6
+                            "Speed" -> Icons.Default.Settings
+                            else -> if (volume == 0) Icons.Default.VolumeMute else Icons.Default.VolumeUp
+                        },
                         contentDescription = null, tint = Color.White, modifier = Modifier.size(25.dp)
                     )
                     Text(gestureLabel, color = Color.White, style = MaterialTheme.typography.labelMedium)
@@ -1544,7 +1596,7 @@ private fun VideoScreen(
                                 Text("Resources", modifier = Modifier.weight(1f), color = Color.White, fontWeight = FontWeight.Bold)
                                 IconButton(onClick = { showResources = false }) { Icon(Icons.Default.ArrowBack, "Close resources", tint = Color.White) }
                             }
-                            ResourceSection(resources, resourcesLoading, onOpenResource, Modifier.weight(1f))
+                            ResourceSection(resources, resourcesLoading, onOpenResource, Modifier.weight(1f), onDownloadResource, downloadRecords, resourceItemKey, activeResourceDownloadKey, activeResourceDownloadCategory, resourceDownloadPercent)
                         }
                     }
                 }
@@ -1635,8 +1687,11 @@ private fun VideoScreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Icon(
-                        if (gestureLabel == "Brightness") Icons.Default.Brightness6
-                        else if (volume == 0) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
+                        when (gestureLabel) {
+                            "Brightness" -> Icons.Default.Brightness6
+                            "Speed" -> Icons.Default.Settings
+                            else -> if (volume == 0) Icons.Default.VolumeMute else Icons.Default.VolumeUp
+                        },
                         contentDescription = null, tint = Color.White, modifier = Modifier.size(25.dp)
                     )
                     Text(gestureLabel, color = Color.White, style = MaterialTheme.typography.labelMedium)
@@ -1671,7 +1726,7 @@ private fun VideoScreen(
                 TextButton(onClick = onNext, enabled = hasNext) { Text("Next"); Icon(Icons.Default.SkipNext, null) }
             }
             if (playerError.isNotBlank()) Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
-            ResourceSection(resources, resourcesLoading, onOpenResource)
+            ResourceSection(resources, resourcesLoading, onOpenResource, onDownload = onDownloadResource, downloadRecords = downloadRecords, itemKey = resourceItemKey, activeDownloadKey = activeResourceDownloadKey, activeDownloadCategory = activeResourceDownloadCategory, downloadPercent = resourceDownloadPercent)
         }
     }
 }
@@ -1681,7 +1736,13 @@ private fun ResourceSection(
     resources: List<LectureResource>,
     loading: Boolean,
     onOpen: (LectureResource) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onDownload: (LectureResource) -> Unit = {},
+    downloadRecords: List<DownloadRecord> = emptyList(),
+    itemKey: (LectureResource) -> String = { it.item.id },
+    activeDownloadKey: String = "",
+    activeDownloadCategory: String = "",
+    downloadPercent: Int = 0
 ) {
     Column(
         modifier.fillMaxWidth()
@@ -1701,13 +1762,13 @@ private fun ResourceSection(
             val notes = resources.filterNot { it.isDpp }
             val dpp = resources.filter { it.isDpp }
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 190.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 if (notes.isNotEmpty()) {
                     item { Text("NOTES", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
                     items(notes, key = { "note_${it.item.id}" }) { resource ->
-                        ResourceRow(resource, onOpen)
+                        ResourceRow(resource, onOpen, onDownload, downloadRecords, itemKey(resource), activeDownloadKey, activeDownloadCategory, downloadPercent)
                     }
                 }
                 if (dpp.isNotEmpty()) {
@@ -1722,17 +1783,46 @@ private fun ResourceSection(
 }
 
 @Composable
-private fun ResourceRow(resource: LectureResource, onOpen: (LectureResource) -> Unit) {
+private fun ResourceRow(
+    resource: LectureResource,
+    onOpen: (LectureResource) -> Unit,
+    onDownload: (LectureResource) -> Unit,
+    downloadRecords: List<DownloadRecord>,
+    itemKey: String,
+    activeDownloadKey: String,
+    activeDownloadCategory: String,
+    downloadPercent: Int
+) {
+    val category = if (resource.isDpp) "DPP" else "Notes"
+    val cleanTitle = resource.item.title.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim()
+    val downloaded = downloadRecords.any { record ->
+        record.category == category && (record.itemKey == itemKey ||
+            (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)))
+    }
+    val downloading = activeDownloadKey == itemKey && activeDownloadCategory == category
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF202838)).clickable { onOpen(resource) }
-            .padding(horizontal = 10.dp, vertical = 9.dp),
+            .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.FolderOpen, null, tint = if (resource.isDpp) Color(0xFF71D6C5) else Color(0xFFB5A9FF), modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(9.dp))
+        Icon(Icons.Default.FolderOpen, null, tint = if (resource.isDpp) Color(0xFF71D6C5) else Color(0xFFB5A9FF), modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(7.dp))
         Text(resource.item.title, modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall, maxLines = 2)
-        Icon(Icons.Default.ArrowForward, null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+        IconButton(
+            onClick = { if (!downloaded && !downloading) onDownload(resource) },
+            enabled = !downloaded && !downloading,
+            modifier = Modifier.size(34.dp)
+        ) {
+            when {
+                downloading -> Box(contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(21.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
+                    Text("$downloadPercent%", fontSize = 7.sp, color = Color.White)
+                }
+                downloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(19.dp))
+                else -> Icon(Icons.Default.Download, "Download resource", tint = Color(0xFF858B98), modifier = Modifier.size(19.dp))
+            }
+        }
     }
 }
 
