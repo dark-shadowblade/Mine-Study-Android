@@ -36,7 +36,8 @@ data class DownloadRecord(
     val name: String,
     val category: String,
     val mime: String,
-    val bytes: Long
+    val bytes: Long,
+    val itemKey: String = ""
 )
 
 class DownloadControl {
@@ -60,7 +61,7 @@ object DownloadRepository {
             val item = array.optJSONObject(index) ?: return@mapNotNull null
             DownloadRecord(
                 item.optString("uri"), item.optString("name"), item.optString("category"),
-                item.optString("mime"), item.optLong("bytes")
+                item.optString("mime"), item.optLong("bytes"), item.optString("itemKey")
             ).takeIf { it.uri.isNotBlank() }
         }.filter { record ->
             runCatching { context.contentResolver.openFileDescriptor(Uri.parse(record.uri), "r")?.use { true } ?: false }.getOrDefault(false)
@@ -73,7 +74,7 @@ object DownloadRepository {
         all.forEach { item ->
             array.put(JSONObject().apply {
                 put("uri", item.uri); put("name", item.name); put("category", item.category)
-                put("mime", item.mime); put("bytes", item.bytes)
+                put("mime", item.mime); put("bytes", item.bytes); put("itemKey", item.itemKey)
             })
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(RECORDS, array.toString()).apply()
@@ -85,6 +86,7 @@ object DownloadRepository {
         title: String,
         category: String,
         isVideo: Boolean,
+        itemKey: String = "",
         control: DownloadControl = DownloadControl(),
         onProgress: (Long, Long) -> Unit
     ): DownloadRecord = withContext(Dispatchers.IO) {
@@ -161,7 +163,7 @@ object DownloadRepository {
             if (Build.VERSION.SDK_INT >= 29) {
                 resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
             }
-            val record = DownloadRecord(uri.toString(), fileName, category, mime, written)
+            val record = DownloadRecord(uri.toString(), fileName, category, mime, written, itemKey)
             save(context, record)
             record
         } catch (error: Exception) {
