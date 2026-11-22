@@ -22,6 +22,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -1000,6 +1001,16 @@ private fun VideoScreen(
     var volume by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
     var volumePanel by remember { mutableStateOf(false) }
     var previousVolume by remember { mutableIntStateOf(volume.coerceAtLeast(1)) }
+    var gestureActive by remember { mutableStateOf(false) }
+    var gestureLabel by remember { mutableStateOf("") }
+    var gestureValue by remember { mutableStateOf("") }
+
+    LaunchedEffect(gestureActive) {
+        if (gestureActive) {
+            delay(900)
+            gestureActive = false
+        }
+    }
 
     val player = remember(url, playbackKey) {
         val mediaUri = Uri.parse(url)
@@ -1350,7 +1361,51 @@ private fun VideoScreen(
     }
 
     if (fullScreen) {
-        Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(player, controlsLocked) {
+        Box(Modifier.fillMaxSize().background(Color.Black)
+            .pointerInput(player, controlsLocked, maxVolume) {
+                        var activeSide = ""
+                        var volumeLevel = 0f
+                        var brightnessLevel = 0f
+                        detectVerticalDragGestures(
+                            onDragStart = { point ->
+                                if (!controlsLocked) {
+                                    activeSide = if (point.x < size.width / 2f) "brightness" else "volume"
+                                    volumeLevel = audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+                                    val current = activity?.window?.attributes?.screenBrightness ?: -1f
+                                    brightnessLevel = if (current >= 0f) current else
+                                        android.provider.Settings.System.getInt(context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
+                                    gestureLabel = if (activeSide == "brightness") "Brightness" else "Volume"
+                                    gestureValue = if (activeSide == "brightness") "${(brightnessLevel * 100).toInt()}%" else "${(volumeLevel / maxVolume * 100).toInt()}%"
+                                    gestureActive = true
+                                }
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                if (!controlsLocked && activeSide.isNotEmpty()) {
+                                    change.consume()
+                                    if (activeSide == "brightness") {
+                                        brightnessLevel = (brightnessLevel - dragAmount / size.height).coerceIn(0.02f, 1f)
+                                        activity?.window?.let { window ->
+                                            val params = window.attributes
+                                            params.screenBrightness = brightnessLevel
+                                            window.attributes = params
+                                        }
+                                        gestureValue = "${(brightnessLevel * 100).toInt()}%"
+                                    } else {
+                                        volumeLevel = (volumeLevel - dragAmount / size.height * maxVolume * 2f).coerceIn(0f, maxVolume.toFloat())
+                                        val newVolume = volumeLevel.toInt().coerceIn(0, maxVolume)
+                                        audio.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
+                                        volume = newVolume
+                                        if (newVolume > 0) previousVolume = newVolume
+                                        gestureValue = "${(newVolume.toFloat() / maxVolume * 100).toInt()}%"
+                                    }
+                                    gestureActive = true
+                                }
+                            },
+                            onDragEnd = { activeSide = "" },
+                            onDragCancel = { activeSide = "" }
+                        )
+                    }
+            .pointerInput(player, controlsLocked) {
             detectTapGestures(
                 onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
                 onDoubleTap = { offset ->
@@ -1368,6 +1423,23 @@ private fun VideoScreen(
                 update = { it.player = player },
                 modifier = Modifier.fillMaxSize()
             )
+            if (gestureActive && !controlsLocked) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center)
+                        .background(Color(0xCC10131B), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Icon(
+                        if (gestureLabel == "Brightness") Icons.Default.Settings
+                        else if (volume == 0) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
+                        contentDescription = null, tint = Color.White, modifier = Modifier.size(25.dp)
+                    )
+                    Text(gestureLabel, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    Text(gestureValue, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                }
+            }
             if (controlsLocked) {
                 Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
                     .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 9.dp))
@@ -1387,6 +1459,49 @@ private fun VideoScreen(
             }
             Box(
                 Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)).background(Color.Black)
+                    .pointerInput(player, controlsLocked, maxVolume) {
+                        var activeSide = ""
+                        var volumeLevel = 0f
+                        var brightnessLevel = 0f
+                        detectVerticalDragGestures(
+                            onDragStart = { point ->
+                                if (!controlsLocked) {
+                                    activeSide = if (point.x < size.width / 2f) "brightness" else "volume"
+                                    volumeLevel = audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+                                    val current = activity?.window?.attributes?.screenBrightness ?: -1f
+                                    brightnessLevel = if (current >= 0f) current else
+                                        android.provider.Settings.System.getInt(context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
+                                    gestureLabel = if (activeSide == "brightness") "Brightness" else "Volume"
+                                    gestureValue = if (activeSide == "brightness") "${(brightnessLevel * 100).toInt()}%" else "${(volumeLevel / maxVolume * 100).toInt()}%"
+                                    gestureActive = true
+                                }
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                if (!controlsLocked && activeSide.isNotEmpty()) {
+                                    change.consume()
+                                    if (activeSide == "brightness") {
+                                        brightnessLevel = (brightnessLevel - dragAmount / size.height).coerceIn(0.02f, 1f)
+                                        activity?.window?.let { window ->
+                                            val params = window.attributes
+                                            params.screenBrightness = brightnessLevel
+                                            window.attributes = params
+                                        }
+                                        gestureValue = "${(brightnessLevel * 100).toInt()}%"
+                                    } else {
+                                        volumeLevel = (volumeLevel - dragAmount / size.height * maxVolume * 2f).coerceIn(0f, maxVolume.toFloat())
+                                        val newVolume = volumeLevel.toInt().coerceIn(0, maxVolume)
+                                        audio.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
+                                        volume = newVolume
+                                        if (newVolume > 0) previousVolume = newVolume
+                                        gestureValue = "${(newVolume.toFloat() / maxVolume * 100).toInt()}%"
+                                    }
+                                    gestureActive = true
+                                }
+                            },
+                            onDragEnd = { activeSide = "" },
+                            onDragCancel = { activeSide = "" }
+                        )
+                    }
                     .pointerInput(player, controlsLocked) {
                         detectTapGestures(
                             onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
@@ -1406,7 +1521,24 @@ private fun VideoScreen(
                     update = { it.player = player },
                     modifier = Modifier.fillMaxSize()
                 )
-                if (controlsLocked) {
+                if (gestureActive && !controlsLocked) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center)
+                        .background(Color(0xCC10131B), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Icon(
+                        if (gestureLabel == "Brightness") Icons.Default.Settings
+                        else if (volume == 0) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
+                        contentDescription = null, tint = Color.White, modifier = Modifier.size(25.dp)
+                    )
+                    Text(gestureLabel, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    Text(gestureValue, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            if (controlsLocked) {
                     Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
                         .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 8.dp))
                 } else if (showControls) PlayerOverlay(landscape = false)
