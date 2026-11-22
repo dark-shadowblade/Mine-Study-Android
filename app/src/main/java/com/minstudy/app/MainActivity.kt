@@ -778,7 +778,7 @@ private fun MineStudyApp() {
                     )
                     "downloads" -> DownloadGallery(
                         records = downloadRecords,
-                        status = downloadState.status,
+                        status = if (downloadState.active) "${downloadState.status} · ${downloadState.runningCount} active · ${downloadState.queuedCount} queued" else downloadState.status,
                         active = downloadState.active,
                         paused = downloadState.paused,
                         bytes = downloadState.bytes,
