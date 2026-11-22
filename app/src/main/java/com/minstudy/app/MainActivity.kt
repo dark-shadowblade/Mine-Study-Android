@@ -908,6 +908,7 @@ private fun MineStudyApp() {
                 var lastScannedPage = page - 1
                 var totalPages = batchSearchTotalPages.coerceAtLeast(1)
                 var scanned = 0
+                var newMatches = 0
 
                 // Publish page one immediately; never make the user wait for a
                 // large local-search scan before the first results appear.
@@ -915,6 +916,7 @@ private fun MineStudyApp() {
                     val (firstPage, reportedPages) = api.searchBatches(1, "")
                     totalPages = reportedPages.coerceAtLeast(1)
                     accumulated = if (query.isBlank()) firstPage else firstPage.filter { batchMatches(it, query) }
+                    newMatches = accumulated.size
                     lastScannedPage = 1
                     scanned = 1
                     nextPage = 2
@@ -930,7 +932,7 @@ private fun MineStudyApp() {
                 // eight-page groups, stopping as soon as enough matches are available.
                 val pageBudget = if (query.isBlank()) 8 else 50
                 while (nextPage <= totalPages && scanned < pageBudget &&
-                    (query.isBlank() || accumulated.size < 20)) {
+                    (query.isBlank() || newMatches < 20)) {
                     val groupEnd = minOf(nextPage + 7, totalPages, page + pageBudget - 1)
                     val pages = coroutineScope {
                         (nextPage..groupEnd).map { requestedPage ->
@@ -941,7 +943,9 @@ private fun MineStudyApp() {
                         val (pageResults, reportedPages) = response
                         totalPages = reportedPages.coerceAtLeast(1)
                         val matches = if (query.isBlank()) pageResults else pageResults.filter { batchMatches(it, query) }
+                        val previousSize = accumulated.size
                         accumulated = (accumulated + matches).distinctBy { it.id }
+                        newMatches += accumulated.size - previousSize
                         lastScannedPage = requestedPage
                         scanned++
                     }
