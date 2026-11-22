@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -110,6 +111,7 @@ private val DEFAULT_BATCH_IDS = setOf(BATCH_ONE, BATCH_TWO)
 
 data class StudyItem(val id: String, val title: String, val subtitle: String = "", val raw: JSONObject = JSONObject())
 data class LectureResource(val item: StudyItem, val isDpp: Boolean)
+data class BatchInfo(val id: String, val name: String, val language: String = "", val className: String = "")
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -192,6 +194,22 @@ private class StudyApi(private val context: Context) {
             }
         }
         throw IllegalStateException("Network request failed after 3 attempts: ${lastError?.message ?: "unknown network error"}", lastError)
+    }
+
+    suspend fun searchBatches(page: Int, keyword: String): Pair<List<BatchInfo>, Int> {
+        val query = buildString {
+            append("/batch/search/v2?cohortId=635b83410a47c70011ca5ffb&exam=UPSC&page=$page")
+            if (keyword.isNotBlank()) append("&keyword=${enc(keyword)}")
+        }
+        val payload = get(query, unwrapData = true) as? JSONObject
+            ?: throw IllegalStateException("Unexpected batch search response")
+        val array = payload.optJSONArray("batches") ?: JSONArray()
+        val batches = (0 until array.length()).mapNotNull { index ->
+            val item = array.optJSONObject(index) ?: return@mapNotNull null
+            val id = item.optString("_id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            BatchInfo(id, item.optString("name", "Unnamed batch"), item.optString("lang", ""), item.optString("class", ""))
+        }
+        return batches to payload.optJSONObject("pagination")?.optInt("totalPages", 1)?.coerceAtLeast(1) ?: 1
     }
 
     suspend fun generateKeyLink(): String {
@@ -325,8 +343,20 @@ private fun MineStudyApp() {
         mutableStateOf((context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
             .getStringSet("saved_batch_ids", DEFAULT_BATCH_IDS)?.toSet() ?: DEFAULT_BATCH_IDS) + api.batchId)
     }
-    var newBatchId by remember { mutableStateOf("") }
-    var addingBatch by remember { mutableStateOf(false) }
+    var batchSearchText by remember { mutableStateOf("") }
+    var batchSearchResults by remember { mutableStateOf(emptyList<BatchInfo>()) }
+    var batchSearchLoading by remember { mutableStateOf(false) }
+    var batchSearchError by remember { mutableStateOf("") }
+    var batchSearchPage by remember { mutableIntStateOf(1) }
+    var batchSearchTotalPages by remember { mutableIntStateOf(1) }
+    var batchSearchExecuted by remember { mutableStateOf(false) }
+    var savedBatchInfo by remember {
+        mutableStateOf(context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
+            .getStringSet("saved_batch_info", emptySet())?.mapNotNull { raw ->
+                val parts = raw.split("::", limit = 4)
+                if (parts.size >= 2) BatchInfo(parts[0], parts[1], parts.getOrNull(2).orEmpty(), parts.getOrNull(3).orEmpty()) else null
+            }?.associateBy { it.id } ?: emptyMap())
+    }
     var screen by remember { mutableStateOf("home") }
     var type by remember { mutableStateOf("videos") }
     var subjects by remember { mutableStateOf(emptyList<StudyItem>()) }
@@ -701,6 +731,61 @@ private fun MineStudyApp() {
         }
     }
 
+    fun saveBatchInfo(info: BatchInfo) {
+        val updated = savedBatchIds + info.id
+        savedBatchIds = updated
+        val updatedInfo = savedBatchInfo + (info.id to info)
+        savedBatchInfo = updatedInfo
+        context.getSharedPreferences("mine_study", Context.MODE_PRIVATE).edit()
+            .putStringSet("saved_batch_ids", updated.toSet())
+            .putStringSet("saved_batch_info", updatedInfo.values.map { "${it.id}::${it.name}::${it.language}::${it.className}" }.toSet())
+            .apply()
+    }
+
+    fun openBatch(info: BatchInfo) {
+        scope.launch {
+            busy = true
+            error = ""
+            try {
+                val foundSubjects = api.list(api.get("/batch/${info.id}/subject"), "subjects")
+                batch = info.id
+                api.batchId = info.id
+                saveBatchInfo(info)
+                subjects = foundSubjects
+                selectedSubject = null
+                selectedChapter = null
+                chapters = emptyList()
+                contents = emptyList()
+                lectureResources = emptyList()
+                loadedChaptersBatch = ""
+                loadedContentsBatch = ""
+                screen = "home"
+            } catch (e: Exception) {
+                error = e.message ?: "Could not open this batch"
+            } finally { busy = false }
+        }
+    }
+
+    fun searchBatches(page: Int = 1) {
+        if (apiKey.isBlank()) {
+            batchSearchError = "Add and verify your API key in Settings first."
+            return
+        }
+        scope.launch {
+            batchSearchLoading = true
+            batchSearchError = ""
+            try {
+                val (results, pages) = api.searchBatches(page, batchSearchText.trim())
+                batchSearchResults = if (page == 1) results else batchSearchResults + results
+                batchSearchPage = page
+                batchSearchTotalPages = pages
+                batchSearchExecuted = true
+            } catch (e: Exception) {
+                batchSearchError = e.message ?: "Batch search failed"
+            } finally { batchSearchLoading = false }
+        }
+    }
+
     fun goBack() {
         screen = when (screen) {
             "player" -> "contents"
@@ -742,6 +827,30 @@ private fun MineStudyApp() {
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0B0D14))
                     )
+                }
+            },
+            bottomBar = {
+                if (screen in setOf("home", "all_batches", "my_batches")) {
+                    NavigationBar(containerColor = Color(0xFF111622)) {
+                        NavigationBarItem(
+                            selected = screen == "home",
+                            onClick = { screen = "home"; if (subjects.isEmpty() && apiKey.isNotBlank()) loadSubjects() },
+                            icon = { Icon(Icons.Default.MenuBook, contentDescription = null) },
+                            label = { Text("Study") }
+                        )
+                        NavigationBarItem(
+                            selected = screen == "all_batches",
+                            onClick = { screen = "all_batches" },
+                            icon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            label = { Text("All batches") }
+                        )
+                        NavigationBarItem(
+                            selected = screen == "my_batches",
+                            onClick = { screen = "my_batches" },
+                            icon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
+                            label = { Text("My batches") }
+                        )
+                    }
                 }
             },
             containerColor = Color(0xFF0B0D14)
@@ -792,6 +901,75 @@ private fun MineStudyApp() {
                                 onSelect = { loadChapters(it) },
                                 onRetry = {}
                             )
+                        }
+                    }
+                    "all_batches" -> {
+                        Text("All batches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = batchSearchText,
+                            onValueChange = { batchSearchText = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Search UPSC batches") },
+                            placeholder = { Text("e.g. Prarambh 2027") },
+                            trailingIcon = {
+                                IconButton(onClick = { batchSearchResults = emptyList(); searchBatches(1) }, enabled = !batchSearchLoading) {
+                                    Icon(Icons.Default.Search, contentDescription = "Search batches")
+                                }
+                            }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        if (batchSearchError.isNotBlank()) Text(batchSearchError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
+                        if (batchSearchLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
+                            items(batchSearchResults, key = { it.id }) { info ->
+                                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(14.dp)) {
+                                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(info.name, fontWeight = FontWeight.SemiBold)
+                                        Text(listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · "), color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                        Text(info.id, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedButton(onClick = { saveBatchInfo(info) }, enabled = info.id !in savedBatchIds) {
+                                                Text(if (info.id in savedBatchIds) "Added to My batches" else "Add batch")
+                                            }
+                                            Button(onClick = { openBatch(info) }, enabled = !busy) { Text(if (batch == info.id) "Open batch" else "Check batch") }
+                                        }
+                                    }
+                                }
+                            }
+                            if (batchSearchExecuted && batchSearchPage < batchSearchTotalPages) {
+                                item {
+                                    OutlinedButton(onClick = { searchBatches(batchSearchPage + 1) }, enabled = !batchSearchLoading, modifier = Modifier.fillMaxWidth()) {
+                                        Text("Load more · Page ${batchSearchPage + 1} of $batchSearchTotalPages")
+                                    }
+                                }
+                            }
+                            if (batchSearchExecuted && batchSearchResults.isEmpty() && !batchSearchLoading) {
+                                item { Text("No batches found.", color = Color.Gray) }
+                            }
+                        }
+                    }
+                    "my_batches" -> {
+                        Text("My batches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Your saved study batches", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(8.dp))
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
+                            items(savedBatchIds.sorted(), key = { it }) { id ->
+                                val info = savedBatchInfo[id] ?: BatchInfo(id, "Saved batch")
+                                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(14.dp)) {
+                                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(info.name, fontWeight = FontWeight.SemiBold)
+                                            if (info.language.isNotBlank()) Text(info.language, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                            Text(id, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        if (batch == id) Icon(Icons.Default.CheckCircle, "Current batch", tint = Color(0xFF71D6C5), modifier = Modifier.padding(end = 6.dp))
+                                        Button(onClick = { openBatch(info) }, enabled = !busy) { Text(if (batch == id) "Open" else "Check") }
+                                    }
+                                }
+                            }
+                            if (savedBatchIds.isEmpty()) item { Text("No saved batches yet. Find one in All batches.", color = Color.Gray) }
                         }
                     }
                     "subjects" -> ItemList("Subjects", subjects, busy, error, showSubjectStars = true, starredSubjectIds = starredSubjectIds, onToggleStar = ::toggleSubjectStar, onSelect = { loadChapters(it) }, onRetry = { loadSubjects() })
@@ -996,117 +1174,6 @@ private fun MineStudyApp() {
                     Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("BATCHES", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
-                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        savedBatchIds.sorted().forEach { batchId ->
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        if (batch != batchId) {
-                                            batch = batchId
-                                            api.batchId = batchId
-                                            selectedSubject = null
-                                            selectedChapter = null
-                                            chapters = emptyList()
-                                            contents = emptyList()
-                                            lectureResources = emptyList()
-                                            loadedChaptersBatch = ""
-                                            loadedContentsBatch = ""
-                                            loadSubjects()
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                    border = BorderStroke(1.dp, if (batch == batchId) Color(0xFF9B8CFF) else Color(0xFF343D50))
-                                ) {
-                                    Text(
-                                        batchId,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = if (batch == batchId) Color(0xFFC5BAFF) else Color.White,
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                                if (batch == batchId) {
-                                    Icon(Icons.Default.CheckCircle, "Selected batch", tint = Color(0xFF71D6C5), modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        }
-                        OutlinedButton(
-                            onClick = { addingBatch = !addingBatch; newBatchId = ""; keyStatus = "" },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
-                        ) {
-                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (addingBatch) "Close add batch" else "Add batch")
-                        }
-                        if (addingBatch) {
-                            OutlinedTextField(
-                                value = newBatchId,
-                                onValueChange = { newBatchId = it; keyStatus = "" },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                label = { Text("Batch ID") },
-                                placeholder = { Text("Paste batch ID") },
-                                textStyle = MaterialTheme.typography.bodySmall,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
-                                    cursorColor = Color(0xFFB5A9FF),
-                                    focusedBorderColor = Color(0xFF9B8CFF),
-                                    unfocusedBorderColor = Color(0xFF343D50),
-                                    focusedContainerColor = Color(0xFF101521),
-                                    unfocusedContainerColor = Color(0xFF101521)
-                                )
-                            )
-                            Button(
-                                onClick = {
-                                    val candidate = newBatchId.trim()
-                                    if (candidate.isBlank() || candidate.any { it.isWhitespace() }) {
-                                        keyStatus = "Enter a valid batch ID without spaces."
-                                    } else if (candidate in savedBatchIds) {
-                                        keyStatus = "This batch is already saved."
-                                    } else {
-                                        scope.launch {
-                                            val previousBatch = api.batchId
-                                            keyStatus = "Checking batch..."
-                                            try {
-                                                val foundSubjects = api.list(api.get("/batch/$candidate/subject"), "subjects")
-                                                savedBatchIds = savedBatchIds + candidate
-                                                context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
-                                                    .edit().putStringSet("saved_batch_ids", savedBatchIds.toSet()).apply()
-                                                batch = candidate
-                                                api.batchId = candidate
-                                                subjects = foundSubjects
-                                                selectedSubject = null
-                                                selectedChapter = null
-                                                chapters = emptyList()
-                                                contents = emptyList()
-                                                lectureResources = emptyList()
-                                                loadedChaptersBatch = ""
-                                                loadedContentsBatch = ""
-                                                addingBatch = false
-                                                newBatchId = ""
-                                                keyStatus = "Batch saved · ${foundSubjects.size} subjects found"
-                                            } catch (e: Exception) {
-                                                api.batchId = previousBatch
-                                                keyStatus = e.message ?: "Could not load this batch. Check the ID and API key."
-                                            }
-                                        }
-                                    }
-                                },
-                                enabled = newBatchId.isNotBlank() && apiKey.isNotBlank(),
-                                modifier = Modifier.fillMaxWidth(),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
-                            ) { Text("Save batch") }
-                        }
-                    }
-                    HorizontalDivider(color = Color(0xFF303747))
                     Text("API KEY", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
                     OutlinedTextField(
                         value = apiKey,
