@@ -764,6 +764,37 @@ private fun MineStudyApp() {
         }
     }
 
+    fun batchEditDistance(a: String, b: String): Int {
+        var previous = IntArray(b.length + 1) { it }
+        for (i in a.indices) {
+            val current = IntArray(b.length + 1)
+            current[0] = i + 1
+            for (j in b.indices) {
+                val cost = if (a[i] == b[j]) 0 else 1
+                current[j + 1] = minOf(current[j] + 1, previous[j + 1] + 1, previous[j] + cost)
+            }
+            previous = current
+        }
+        return previous[b.length]
+    }
+
+    fun batchMatches(info: BatchInfo, query: String): Boolean {
+        if (query.isBlank()) return true
+        val searchable = "${info.name} ${info.language} ${info.className} ${info.id}"
+            .lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+        val normalizedQuery = query.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+        if (searchable.contains(normalizedQuery)) return true
+        val queryTokens = normalizedQuery.split(Regex("\\s+")).filter { it.isNotBlank() }
+        val nameTokens = searchable.split(Regex("\\s+")).filter { it.isNotBlank() }
+        return queryTokens.all { token ->
+            nameTokens.any { candidate ->
+                candidate.contains(token) || token.contains(candidate) ||
+                    (token.length >= 6 && candidate.length >= 6 &&
+                        batchEditDistance(token, candidate) <= 2)
+            }
+        }
+    }
+
     fun searchBatches(page: Int = 1) {
         if (apiKey.isBlank()) {
             batchSearchError = "Add and verify your API key in Settings first."
@@ -773,10 +804,27 @@ private fun MineStudyApp() {
             batchSearchLoading = true
             batchSearchError = ""
             try {
-                val (results, pages) = api.searchBatches(page, batchSearchText.trim())
-                batchSearchResults = if (page == 1) results else batchSearchResults + results
-                batchSearchPage = page
-                batchSearchTotalPages = pages
+                val query = batchSearchText.trim()
+                val found = mutableListOf<BatchInfo>()
+                var scanPage = page
+                var lastScannedPage = page - 1
+                var totalPages = batchSearchTotalPages
+                var scanned = 0
+                // The upstream endpoint may ignore its keyword parameter. Filter every
+                // returned page locally and scan ahead so unrelated batches never appear.
+                while (scanPage <= totalPages && scanned < if (query.isBlank()) 1 else 10) {
+                    val (pageResults, pages) = api.searchBatches(scanPage, query)
+                    totalPages = pages
+                    found += if (query.isBlank()) pageResults else pageResults.filter { batchMatches(it, query) }
+                    lastScannedPage = scanPage
+                    scanned++
+                    if (query.isBlank() || found.size >= 20) break
+                    scanPage++
+                }
+                batchSearchResults = (if (page == 1) emptyList() else batchSearchResults) + found
+                batchSearchResults = batchSearchResults.distinctBy { it.id }
+                batchSearchPage = lastScannedPage.coerceAtLeast(page)
+                batchSearchTotalPages = totalPages
                 batchSearchExecuted = true
             } catch (e: Exception) {
                 batchSearchError = e.message ?: "Batch search failed"
@@ -939,12 +987,12 @@ private fun MineStudyApp() {
                             if (batchSearchExecuted && batchSearchPage < batchSearchTotalPages) {
                                 item {
                                     OutlinedButton(onClick = { searchBatches(batchSearchPage + 1) }, enabled = !batchSearchLoading, modifier = Modifier.fillMaxWidth()) {
-                                        Text("Load more · Page ${batchSearchPage + 1} of $batchSearchTotalPages")
+                                        Text("Search next pages · ${batchSearchPage + 1} of $batchSearchTotalPages")
                                     }
                                 }
                             }
                             if (batchSearchExecuted && batchSearchResults.isEmpty() && !batchSearchLoading) {
-                                item { Text("No batches found.", color = Color.Gray) }
+                                item { Text(if (batchSearchPage < batchSearchTotalPages) "No matches in pages 1–$batchSearchPage. Search the next pages." else "No matching batches found.", color = Color.Gray) }
                             }
                         }
                     }
