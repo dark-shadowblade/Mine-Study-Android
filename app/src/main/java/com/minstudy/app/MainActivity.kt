@@ -1755,7 +1755,7 @@ private fun VideoScreen(
                 TextButton(onClick = onNext, enabled = hasNext) { Text("Next"); Icon(Icons.Default.SkipNext, null) }
             }
             if (playerError.isNotBlank()) Text(playerError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
-            ResourceSection(resources, resourcesLoading, onOpenResource, onDownload = onDownloadResource, downloadRecords = downloadRecords, itemKey = resourceItemKey, activeDownloadKey = activeResourceDownloadKey, activeDownloadCategory = activeResourceDownloadCategory, downloadPercent = resourceDownloadPercent)
+            ResourceSection(resources, resourcesLoading, onOpenResource, modifier = Modifier.weight(1f), onDownload = onDownloadResource, downloadRecords = downloadRecords, itemKey = resourceItemKey, activeDownloadKey = activeResourceDownloadKey, activeDownloadCategory = activeResourceDownloadCategory, downloadPercent = resourceDownloadPercent)
         }
     }
 }
@@ -1791,7 +1791,7 @@ private fun ResourceSection(
             val notes = resources.filterNot { it.isDpp }
             val dpp = resources.filter { it.isDpp }
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 if (notes.isNotEmpty()) {
