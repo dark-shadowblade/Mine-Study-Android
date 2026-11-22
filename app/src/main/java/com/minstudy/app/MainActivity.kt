@@ -1097,7 +1097,6 @@ private fun VideoScreen(
             if (buffering && playerError.isBlank()) {
                 Column(Modifier.align(Alignment.Center).background(Color(0x99000000), RoundedCornerShape(14.dp)).padding(horizontal = 18.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 2.5.dp, color = Color.White)
-                    Text("Buffering…", color = Color.White, style = MaterialTheme.typography.labelMedium)
                 }
             }
             if (controlsLocked) {
@@ -1133,7 +1132,6 @@ private fun VideoScreen(
             if (buffering && playerError.isBlank()) {
                 Column(Modifier.align(Alignment.Center).background(Color(0x99000000), RoundedCornerShape(14.dp)).padding(horizontal = 18.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 2.5.dp, color = Color.White)
-                    Text("Buffering…", color = Color.White, style = MaterialTheme.typography.labelMedium)
                 }
             }
                 if (controlsLocked) {
