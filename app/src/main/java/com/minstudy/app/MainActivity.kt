@@ -1079,6 +1079,7 @@ private fun MineStudyApp() {
                                                 Text(if (info.id in savedBatchIds) "Added to My batches" else "Add batch")
                                             }
                                             Button(onClick = { openBatch(info) }, enabled = !busy) { Text(if (batch == info.id) "Open batch" else "Check batch") }
+                                            }
                                         }
                                     }
                                 }
