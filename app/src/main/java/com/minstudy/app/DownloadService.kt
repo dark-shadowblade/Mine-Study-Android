@@ -48,6 +48,7 @@ class DownloadService : Service() {
         private const val ACTION_PAUSE = "com.minstudy.app.download.PAUSE"
         private const val ACTION_RESUME = "com.minstudy.app.download.RESUME"
         private const val ACTION_CANCEL = "com.minstudy.app.download.CANCEL"
+        private const val ACTION_CANCEL_ITEM = "com.minstudy.app.download.CANCEL_ITEM"
         private const val ACTION_PAUSE_ITEM = "com.minstudy.app.download.PAUSE_ITEM"
         private const val ACTION_RESUME_ITEM = "com.minstudy.app.download.RESUME_ITEM"
         private const val EXTRA_CONTROL_KEY = "control_key"
@@ -79,6 +80,7 @@ class DownloadService : Service() {
         fun pause(context: Context) = command(context, ACTION_PAUSE)
         fun resume(context: Context) = command(context, ACTION_RESUME)
         fun cancel(context: Context) = command(context, ACTION_CANCEL)
+        fun cancelItem(context: Context, id: String) = itemCommand(context, ACTION_CANCEL_ITEM, id)
         fun pauseItem(context: Context, key: String) = itemCommand(context, ACTION_PAUSE_ITEM, key)
         fun resumeItem(context: Context, key: String) = itemCommand(context, ACTION_RESUME_ITEM, key)
         fun setParallelLimit(context: Context, value: Int) { context.startService(Intent(context, DownloadService::class.java).setAction(ACTION_SET_LIMIT).putExtra(EXTRA_LIMIT, value.coerceIn(1, 5))) }
@@ -174,6 +176,18 @@ class DownloadService : Service() {
                 if (active.containsKey(key)) resumeRequested.add(key)
                 pumpQueue()
                 refreshQueueState("Resume queued")
+            }
+            ACTION_CANCEL_ITEM -> {
+                val id = command.getStringExtra(EXTRA_CONTROL_KEY).orEmpty()
+                val runningTask = active[id]
+                if (runningTask != null) {
+                    runningTask.second.cancelled = true
+                    refreshQueueState("Cancelling • ${runningTask.first.title}")
+                } else {
+                    val remaining = pending.filterNot { it.id == id }
+                    pending.clear(); remaining.forEach { pending.addLast(it) }
+                    refreshQueueState("Removed from queue")
+                }
             }
             ACTION_CANCEL -> {
                 pending.clear()
