@@ -903,42 +903,55 @@ private fun MineStudyApp() {
             batchSearchError = ""
             try {
                 val query = batchSearchText.trim()
-                val found = mutableListOf<BatchInfo>()
-                var scanPage = page.coerceAtLeast(1)
+                var accumulated = if (page == 1) emptyList() else batchSearchResults
+                var nextPage = page.coerceAtLeast(1)
                 var lastScannedPage = page - 1
                 var totalPages = batchSearchTotalPages.coerceAtLeast(1)
                 var scanned = 0
-                // Read page one first to learn the server's real page count.
+
+                // Publish page one immediately; never make the user wait for a
+                // large local-search scan before the first results appear.
                 if (page == 1) {
                     val (firstPage, reportedPages) = api.searchBatches(1, "")
                     totalPages = reportedPages.coerceAtLeast(1)
-                    found += if (query.isBlank()) firstPage else firstPage.filter { batchMatches(it, query) }
+                    accumulated = if (query.isBlank()) firstPage else firstPage.filter { batchMatches(it, query) }
                     lastScannedPage = 1
                     scanned = 1
-                    scanPage = 2
+                    nextPage = 2
+                    batchSearchResults = accumulated
+                    batchSearchPage = 1
+                    batchSearchTotalPages = totalPages
+                    batchSearchExecuted = true
                 }
-                // Fetch the remaining pages concurrently in groups of eight. The API ignores
-                // keyword, so matching remains local while network latency is parallelized.
-                val pageBudget = if (query.isBlank()) 1 else 50
-                while (scanPage <= totalPages && scanned < pageBudget) {
-                    val groupEnd = minOf(scanPage + 7, totalPages, page + pageBudget - 1)
+
+                // The server currently ignores its keyword parameter. Search locally,
+                // but publish each concurrent page group as soon as it completes.
+                // Blank searches fetch eight pages per load; text searches scan in
+                // eight-page groups, stopping as soon as enough matches are available.
+                val pageBudget = if (query.isBlank()) 8 else 50
+                while (nextPage <= totalPages && scanned < pageBudget &&
+                    (query.isBlank() || accumulated.size < 20)) {
+                    val groupEnd = minOf(nextPage + 7, totalPages, page + pageBudget - 1)
                     val pages = coroutineScope {
-                        (scanPage..groupEnd).map { requestedPage ->
+                        (nextPage..groupEnd).map { requestedPage ->
                             async { requestedPage to api.searchBatches(requestedPage, "") }
                         }.map { it.await() }.sortedBy { it.first }
                     }
                     for ((requestedPage, response) in pages) {
                         val (pageResults, reportedPages) = response
                         totalPages = reportedPages.coerceAtLeast(1)
-                        found += if (query.isBlank()) pageResults else pageResults.filter { batchMatches(it, query) }
+                        val matches = if (query.isBlank()) pageResults else pageResults.filter { batchMatches(it, query) }
+                        accumulated = (accumulated + matches).distinctBy { it.id }
                         lastScannedPage = requestedPage
                         scanned++
                     }
-                    if (query.isBlank() || found.size >= 20) break
-                    scanPage = groupEnd + 1
+                    batchSearchResults = accumulated
+                    batchSearchPage = lastScannedPage.coerceAtLeast(page)
+                    batchSearchTotalPages = totalPages
+                    batchSearchExecuted = true
+                    nextPage = groupEnd + 1
                 }
-                batchSearchResults = (if (page == 1) emptyList() else batchSearchResults) + found
-                batchSearchResults = batchSearchResults.distinctBy { it.id }
+
                 batchSearchPage = lastScannedPage.coerceAtLeast(page)
                 batchSearchTotalPages = totalPages
                 batchSearchExecuted = true
@@ -1188,7 +1201,7 @@ private fun MineStudyApp() {
                                 ) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BatchThumbnail(info.thumbnail, Modifier.width(104.dp).aspectRatio(1.42f))
+                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(16f / 9f))
                                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                                 Text(info.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                 val details = listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
