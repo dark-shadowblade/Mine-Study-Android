@@ -623,10 +623,15 @@ private fun MineStudyApp() {
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
                         colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            cursorColor = Color(0xFFB5A9FF),
                             focusedBorderColor = Color(0xFF9B8CFF),
                             unfocusedBorderColor = Color(0xFF343D50),
                             focusedContainerColor = Color(0xFF101521),
-                            unfocusedContainerColor = Color(0xFF101521)
+                            unfocusedContainerColor = Color(0xFF101521),
+                            focusedPlaceholderColor = Color(0xFF8791A5),
+                            unfocusedPlaceholderColor = Color(0xFF8791A5)
                         ),
                         placeholder = { Text("Paste your API key", style = MaterialTheme.typography.bodySmall) }
                     )
