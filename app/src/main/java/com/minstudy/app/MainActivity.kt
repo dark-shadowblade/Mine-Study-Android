@@ -580,6 +580,7 @@ private fun MineStudyApp() {
         screen = when (screen) {
             "player" -> "contents"
             "pdf" -> "downloads"
+            "download_center" -> "home"
             "contents" -> "chapters"
             "chapters" -> "home"
             else -> "home"
@@ -606,6 +607,9 @@ private fun MineStudyApp() {
                             }
                         },
                         actions = {
+                            IconButton(onClick = { screen = "download_center" }) {
+                                Icon(Icons.Default.Download, contentDescription = "Download Center")
+                            }
                             IconButton(onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }) {
                                 Icon(Icons.Default.FolderOpen, contentDescription = "Downloads")
                             }
@@ -775,6 +779,19 @@ private fun MineStudyApp() {
                             val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}"
                             startDownload(currentTitle, category, true, itemKey) { currentVideo }
                         }
+                    )
+                    "download_center" -> DownloadCenterScreen(
+                        queueItems = downloadState.queueItems,
+                        maxParallel = downloadState.maxParallel,
+                        runningCount = downloadState.runningCount,
+                        queuedCount = downloadState.queuedCount,
+                        onSetParallel = { DownloadService.setParallelLimit(context, it) },
+                        onPause = { DownloadService.pauseItem(context, it) },
+                        onResume = { DownloadService.resumeItem(context, it) },
+                        onMove = { id, direction -> DownloadService.moveQueued(context, id, direction) },
+                        onRemove = { DownloadService.removeQueued(context, it) },
+                        onCancelAll = { DownloadService.cancel(context) },
+                        onOpenGallery = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }
                     )
                     "downloads" -> DownloadGallery(
                         records = downloadRecords,
