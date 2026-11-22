@@ -499,7 +499,13 @@ private fun MineStudyApp() {
                 val contentPath = "/batch/${api.batchId}/subject/${enc(subject.id)}/chapter/${enc(chapter.id)}/content?type=${enc(type)}"
                 contents = api.list(api.get(contentPath), "contents")
                 screen = "contents"
-            } catch (e: Exception) {                error = e.message ?: "Could not resume your last chapter"            } finally { busy = false }        }    }
+            } catch (e: Exception) {
+                error = e.message ?: "Could not resume your last chapter"
+            } finally {
+                busy = false
+            }
+        }
+    }
 
     fun goBack() {
         screen = when (screen) {
@@ -597,7 +603,8 @@ private fun MineStudyApp() {
                             listOf("videos" to "Lectures", "notes" to "Notes", "DppNotes" to "DPP", "DppVideos" to "DPP videos").forEach { (key, label) ->
                                 FilterChip(selected = type == key, onClick = { selectedChapter?.let { loadContents(it, key) } }, label = { Text(label, fontSize = 11.sp) })
                             }
-                        }                        ItemList(
+                        }
+                        ItemList(
                             "Learning material", contents, busy, error,
                             showThumbnails = true,
                             actionLabel = if (type == "videos" || type == "DppVideos") "Play" else "Open PDF",
@@ -1198,7 +1205,10 @@ private fun VideoScreen(
                             }
                             isDownloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879))
                             else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFFB8BEC9))
-                        }                    }                }                SpeedPicker()
+                        }
+                    }
+                }
+                SpeedPicker()
                 IconButton(onClick = {                    controlsLocked = true
                     showControls = false
                 }, modifier = Modifier.size(38.dp)) {
