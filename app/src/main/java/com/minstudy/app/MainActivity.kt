@@ -439,10 +439,6 @@ private fun MineStudyApp() {
         itemKey: String,
         resolveUrl: suspend () -> String?
     ) {
-        if (downloadState.active) {
-            Toast.makeText(context, "A download is already running", Toast.LENGTH_SHORT).show()
-            return
-        }
         val existing = DownloadRepository.list(context).any { record ->
             record.category == category && (record.itemKey == itemKey ||
                 (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(title.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim(), true)))
@@ -1379,9 +1375,9 @@ private fun VideoScreen(
                     }
                     Spacer(Modifier.width(22.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        if (bufferingVisible && playerError.isBlank()) CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp, color = Color.White)
-                        if (bufferingVisible && playerError.isBlank()) Spacer(Modifier.height(7.dp))
-                        FilledIconButton(
+                        if (bufferingVisible && playerError.isBlank()) {
+                            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp, color = Color.White)
+                        } else FilledIconButton(
                             onClick = {
                                 if (player.isPlaying) player.pause()
                                 else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
@@ -1405,9 +1401,9 @@ private fun VideoScreen(
                     }
                     Spacer(Modifier.width(16.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        if (bufferingVisible && playerError.isBlank()) CircularProgressIndicator(Modifier.size(25.dp), strokeWidth = 2.5.dp, color = Color.White)
-                        if (bufferingVisible && playerError.isBlank()) Spacer(Modifier.height(6.dp))
-                        FilledIconButton(
+                        if (bufferingVisible && playerError.isBlank()) {
+                            CircularProgressIndicator(Modifier.size(25.dp), strokeWidth = 2.5.dp, color = Color.White)
+                        } else FilledIconButton(
                             onClick = {
                                 if (player.isPlaying) player.pause()
                                 else if (player.playbackState == com.google.android.exoplayer2.Player.STATE_ENDED) { player.seekTo(0L); player.play() }
