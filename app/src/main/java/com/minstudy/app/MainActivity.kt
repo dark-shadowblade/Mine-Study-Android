@@ -908,8 +908,17 @@ private fun MineStudyApp() {
                 var lastScannedPage = page - 1
                 var totalPages = batchSearchTotalPages.coerceAtLeast(1)
                 var scanned = 0
-                // Fetch pages concurrently in groups of eight. The API ignores keyword,
-                // so matching remains local while network latency is parallelized.
+                // Read page one first to learn the server's real page count.
+                if (page == 1) {
+                    val (firstPage, reportedPages) = api.searchBatches(1, "")
+                    totalPages = reportedPages.coerceAtLeast(1)
+                    found += if (query.isBlank()) firstPage else firstPage.filter { batchMatches(it, query) }
+                    lastScannedPage = 1
+                    scanned = 1
+                    scanPage = 2
+                }
+                // Fetch the remaining pages concurrently in groups of eight. The API ignores
+                // keyword, so matching remains local while network latency is parallelized.
                 val pageBudget = if (query.isBlank()) 1 else 50
                 while (scanPage <= totalPages && scanned < pageBudget) {
                     val groupEnd = minOf(scanPage + 7, totalPages, page + pageBudget - 1)
