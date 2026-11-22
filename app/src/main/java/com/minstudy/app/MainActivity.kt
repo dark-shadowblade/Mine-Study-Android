@@ -28,6 +28,8 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -991,7 +993,7 @@ private fun MineStudyApp() {
             },
             text = {
                 Column(
-                    Modifier.fillMaxWidth().heightIn(max = 350.dp),
+                    Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text("BATCHES", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
