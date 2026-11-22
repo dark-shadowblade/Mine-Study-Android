@@ -209,6 +209,7 @@ object DownloadRepository {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @androidx.compose.runtime.Composable
 fun DownloadGallery(
     records: List<DownloadRecord>,
