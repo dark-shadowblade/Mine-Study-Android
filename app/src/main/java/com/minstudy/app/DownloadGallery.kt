@@ -513,6 +513,7 @@ fun DownloadCenterScreen(
     onPause: (String) -> Unit,
     onResume: (String) -> Unit,
     onCancelItem: (String) -> Unit,
+    onCancelItems: (List<String>) -> Unit,
     onMove: (String, String) -> Unit,
     onRemove: (String) -> Unit,
     onCancelAll: () -> Unit,
@@ -521,6 +522,7 @@ fun DownloadCenterScreen(
 ) {
     var confirmAction by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
     var confirmCancelId by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var selectedDownloadIds by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(setOf<String>()) }
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
@@ -556,8 +558,20 @@ fun DownloadCenterScreen(
         item {
             androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 androidx.compose.material3.Text("Downloads", Modifier.weight(1f), style = androidx.compose.material3.MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                if (queueItems.any { !it.active }) androidx.compose.material3.TextButton(onClick = { confirmAction = "clear" }) { androidx.compose.material3.Text("Clear queue", style = androidx.compose.material3.MaterialTheme.typography.labelMedium) }
-                if (queueItems.isNotEmpty()) androidx.compose.material3.TextButton(onClick = { confirmAction = "cancel" }) { androidx.compose.material3.Text("Cancel all", color = androidx.compose.material3.MaterialTheme.colorScheme.error, style = androidx.compose.material3.MaterialTheme.typography.labelMedium) }
+                if (queueItems.isNotEmpty()) androidx.compose.material3.TextButton(onClick = {
+                    selectedDownloadIds = if (selectedDownloadIds.size == queueItems.size) emptySet() else queueItems.map { it.id }.toSet()
+                }) { androidx.compose.material3.Text(if (selectedDownloadIds.size == queueItems.size) "Deselect all" else "Select all", style = androidx.compose.material3.MaterialTheme.typography.labelMedium) }
+            }
+        }
+        if (queueItems.isNotEmpty()) {
+            item {
+                androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    if (selectedDownloadIds.isNotEmpty()) androidx.compose.material3.TextButton(onClick = { confirmAction = "selected" }) {
+                        androidx.compose.material3.Text("Cancel selected (${selectedDownloadIds.size})", color = androidx.compose.material3.MaterialTheme.colorScheme.error, style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
+                    }
+                    if (queueItems.any { !it.active }) androidx.compose.material3.TextButton(onClick = { confirmAction = "clear" }) { androidx.compose.material3.Text("Clear queue", style = androidx.compose.material3.MaterialTheme.typography.labelMedium) }
+                    androidx.compose.material3.TextButton(onClick = { confirmAction = "cancel" }) { androidx.compose.material3.Text("Cancel all", color = androidx.compose.material3.MaterialTheme.colorScheme.error, style = androidx.compose.material3.MaterialTheme.typography.labelMedium) }
+                }
             }
         }
         if (queueItems.isEmpty()) {
@@ -575,6 +589,13 @@ fun DownloadCenterScreen(
                 androidx.compose.material3.Surface(modifier = Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(13.dp), color = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant) {
                     androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(5.dp)) {
                         androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            androidx.compose.material3.Checkbox(
+                                checked = item.id in selectedDownloadIds,
+                                onCheckedChange = { checked ->
+                                    selectedDownloadIds = if (checked) selectedDownloadIds + item.id else selectedDownloadIds - item.id
+                                },
+                                modifier = Modifier.size(34.dp)
+                            )
                             androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
                                 androidx.compose.material3.Text(item.title, maxLines = 2, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
                                 androidx.compose.material3.Text(if (item.paused) "Paused · slot released" else if (item.active) "Downloading · ${item.category}" else "Queued · ${item.category}", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
@@ -619,15 +640,23 @@ fun DownloadCenterScreen(
     }
     if (confirmAction.isNotEmpty()) {
         val clearing = confirmAction == "clear"
+        val cancellingSelected = confirmAction == "selected"
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmAction = "" },
-            title = { androidx.compose.material3.Text(if (clearing) "Clear queued downloads?" else "Cancel all downloads?") },
-            text = { androidx.compose.material3.Text(if (clearing) "Only waiting downloads will be removed. Active downloads will continue." else "All active downloads will be cancelled and the waiting queue will be cleared.") },
+            title = { androidx.compose.material3.Text(when { clearing -> "Clear queued downloads?"; cancellingSelected -> "Cancel selected downloads?"; else -> "Cancel all downloads?" }) },
+            text = { androidx.compose.material3.Text(when { clearing -> "Only waiting downloads will be removed. Active downloads will continue."; cancellingSelected -> "${selectedDownloadIds.size} selected download(s) will be cancelled or removed from the queue. Other downloads will continue."; else -> "All active downloads will be cancelled and the waiting queue will be cleared." }) },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
-                    if (clearing) onClearQueue() else onCancelAll()
+                    when {
+                        clearing -> onClearQueue()
+                        cancellingSelected -> {
+                            onCancelItems(selectedDownloadIds.toList())
+                            selectedDownloadIds = emptySet()
+                        }
+                        else -> { onCancelAll(); selectedDownloadIds = emptySet() }
+                    }
                     confirmAction = ""
-                }) { androidx.compose.material3.Text(if (clearing) "Clear queue" else "Cancel all", color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
+                }) { androidx.compose.material3.Text(when { clearing -> "Clear queue"; cancellingSelected -> "Cancel selected"; else -> "Cancel all" }, color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
             },
             dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmAction = "" }) { androidx.compose.material3.Text("Keep") } }
         )
