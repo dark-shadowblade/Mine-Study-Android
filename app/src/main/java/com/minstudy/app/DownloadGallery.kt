@@ -512,6 +512,7 @@ fun DownloadCenterScreen(
     onSetParallel: (Int) -> Unit,
     onPause: (String) -> Unit,
     onResume: (String) -> Unit,
+    onCancelItem: (String) -> Unit,
     onMove: (String, String) -> Unit,
     onRemove: (String) -> Unit,
     onCancelAll: () -> Unit,
@@ -584,6 +585,9 @@ fun DownloadCenterScreen(
                             if (item.active) {
                                 androidx.compose.material3.IconButton(onClick = { if (item.paused) onResume(item.id) else onPause(item.id) }, modifier = Modifier.size(34.dp)) {
                                     androidx.compose.material3.Icon(if (item.paused) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = if (item.paused) "Resume" else "Pause", modifier = Modifier.size(19.dp))
+                                }
+                                androidx.compose.material3.IconButton(onClick = { onCancelItem(item.id) }, modifier = Modifier.size(30.dp)) {
+                                    androidx.compose.material3.Icon(Icons.Default.Close, contentDescription = "Cancel this download", tint = androidx.compose.material3.MaterialTheme.colorScheme.error, modifier = Modifier.size(17.dp))
                                 }
                             } else {
                                 androidx.compose.material3.TextButton(onClick = { onMove(item.id, "top") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) { androidx.compose.material3.Text("Top", style = androidx.compose.material3.MaterialTheme.typography.labelSmall) }
