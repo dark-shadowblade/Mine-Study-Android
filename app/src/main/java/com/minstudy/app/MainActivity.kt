@@ -23,6 +23,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -1525,7 +1526,7 @@ private fun VideoScreen(
                         detectVerticalDragGestures(
                             onDragStart = { point ->
                                 if (!controlsLocked) {
-                                    activeSide = if (point.x < size.width / 2f) "brightness" else "volume"
+                                    activeSide = if (point.x < size.width / 2f) "volume" else "brightness"
                                     volumeLevel = audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
                                     val current = activity?.window?.attributes?.screenBrightness ?: -1f
                                     brightnessLevel = if (current >= 0f) current else
@@ -1561,29 +1562,23 @@ private fun VideoScreen(
                             onDragCancel = { activeSide = ""; gestureActive = false }
                         )
                     }
-            .pointerInput(player, controlsLocked, playbackSpeed) {
-                var speedSwipeDistance = 0f
-                detectTransformGestures { _, pan, _, _ ->
-                    if (!controlsLocked && kotlin.math.abs(pan.y) > 0.5f) {
-                        speedSwipeDistance += -pan.y
-                        while (speedSwipeDistance >= 28f) {
-                            setSpeed(playbackSpeed + 0.05f)
-                            speedSwipeDistance -= 28f
-                            gestureLabel = "Speed"
-                            gestureValue = String.format(java.util.Locale.US, "%.2f×", playbackSpeed)
-                            gestureActive = true
-                        }
-                        while (speedSwipeDistance <= -28f) {
-                            setSpeed(playbackSpeed - 0.05f)
-                            speedSwipeDistance += 28f
-                            gestureLabel = "Speed"
-                            gestureValue = String.format(java.util.Locale.US, "%.2f×", playbackSpeed)
-                            gestureActive = true
-                        }
-                    }
-                }
-            }
             .pointerInput(player, controlsLocked) {
+                            var swipeSpeed = playbackSpeed
+                            detectHorizontalDragGestures(
+                                onDragStart = { swipeSpeed = playbackSpeed },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    if (!controlsLocked) {
+                                        change.consume()
+                                        // A 50 px horizontal movement changes speed by about 0.10x.
+                                        swipeSpeed = (swipeSpeed + dragAmount * 0.002f).coerceIn(0.25f, 4f)
+                                        setSpeed(swipeSpeed)
+                                        gestureLabel = "Speed"
+                                        gestureValue = String.format(java.util.Locale.US, "%.2f×", swipeSpeed)
+                                        gestureActive = true
+                                    }
+                                }
+                            )
+                        }.pointerInput(player, controlsLocked) {
             detectTapGestures(
                 onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
                 onDoubleTap = { offset ->
@@ -1701,29 +1696,23 @@ private fun VideoScreen(
                             onDragCancel = { activeSide = ""; gestureActive = false }
                         )
                     }
-                    .pointerInput(player, controlsLocked, playbackSpeed) {
-                        var speedSwipeDistance = 0f
-                        detectTransformGestures { _, pan, _, _ ->
-                            if (!controlsLocked && kotlin.math.abs(pan.y) > 0.5f) {
-                                speedSwipeDistance += -pan.y
-                                while (speedSwipeDistance >= 28f) {
-                                    setSpeed(playbackSpeed + 0.05f)
-                                    speedSwipeDistance -= 28f
-                                    gestureLabel = "Speed"
-                                    gestureValue = String.format(java.util.Locale.US, "%.2f×", playbackSpeed)
-                                    gestureActive = true
-                                }
-                                while (speedSwipeDistance <= -28f) {
-                                    setSpeed(playbackSpeed - 0.05f)
-                                    speedSwipeDistance += 28f
-                                    gestureLabel = "Speed"
-                                    gestureValue = String.format(java.util.Locale.US, "%.2f×", playbackSpeed)
-                                    gestureActive = true
-                                }
-                            }
-                        }
-                    }
                     .pointerInput(player, controlsLocked) {
+                                    var swipeSpeed = playbackSpeed
+                                    detectHorizontalDragGestures(
+                                        onDragStart = { swipeSpeed = playbackSpeed },
+                                        onHorizontalDrag = { change, dragAmount ->
+                                            if (!controlsLocked) {
+                                                change.consume()
+                                                // A 50 px horizontal movement changes speed by about 0.10x.
+                                                swipeSpeed = (swipeSpeed + dragAmount * 0.002f).coerceIn(0.25f, 4f)
+                                                setSpeed(swipeSpeed)
+                                                gestureLabel = "Speed"
+                                                gestureValue = String.format(java.util.Locale.US, "%.2f×", swipeSpeed)
+                                                gestureActive = true
+                                            }
+                                        }
+                                    )
+                                }.pointerInput(player, controlsLocked) {
                         detectTapGestures(
                             onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
                             onDoubleTap = { offset ->
