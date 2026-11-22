@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Fullscreen
@@ -365,6 +366,7 @@ private fun MineStudyApp() {
     var batchSearchText by remember { mutableStateOf("") }
     var manualBatchId by remember { mutableStateOf("") }
     var showHomeBatchMenu by remember { mutableStateOf(false) }
+    var batchPendingRemoval by remember { mutableStateOf<String?>(null) }
     var batchSearchResults by remember { mutableStateOf(emptyList<BatchInfo>()) }
     var batchSearchLoading by remember { mutableStateOf(false) }
     var batchSearchError by remember { mutableStateOf("") }
@@ -771,6 +773,22 @@ private fun MineStudyApp() {
             .apply()
     }
 
+    fun removeSavedBatch(id: String) {
+        val updatedIds = savedBatchIds - id
+        val updatedInfo = savedBatchInfo - id
+        savedBatchIds = updatedIds
+        savedBatchInfo = updatedInfo
+        context.getSharedPreferences("mine_study", Context.MODE_PRIVATE).edit()
+            .putStringSet("saved_batch_ids", updatedIds)
+            .putStringSet("saved_batch_info", updatedInfo.values.map { info ->
+                JSONObject().put("id", info.id).put("name", info.name).put("language", info.language)
+                    .put("className", info.className).put("thumbnail", info.thumbnail).toString()
+            }.toSet())
+            .apply()
+        batchPendingRemoval = null
+        Toast.makeText(context, if (batch == id) "Removed from My batches. It remains your active batch." else "Batch removed from My batches", Toast.LENGTH_SHORT).show()
+    }
+
     fun addManualBatch() {
         val id = manualBatchId.trim()
         if (id.isBlank()) return
@@ -894,6 +912,20 @@ private fun MineStudyApp() {
         background = Color(0xFF0B0D14), surface = Color(0xFF151925),
         surfaceVariant = Color(0xFF202638)
     )) {
+        if (batchPendingRemoval != null) {
+            val removingId = batchPendingRemoval!!
+            val removingInfo = savedBatchInfo[removingId]
+            AlertDialog(
+                onDismissRequest = { batchPendingRemoval = null },
+                title = { Text("Remove saved batch?") },
+                text = { Text("${removingInfo?.name ?: "Saved batch"} will be removed from My batches and the home batch list. ${if (batch == removingId) "It is currently active, so it will remain open until you switch batches." else "You can add it again later."}") },
+                confirmButton = { TextButton(onClick = { removeSavedBatch(removingId) }, colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF8A8A))) { Text("Remove") } },
+                dismissButton = { TextButton(onClick = { batchPendingRemoval = null }) { Text("Keep batch") } },
+                containerColor = Color(0xFF171D2A),
+                titleContentColor = Color.White,
+                textContentColor = Color(0xFFB8C1D1)
+            )
+        }
         Scaffold(
             topBar = {
                 if (screen != "player") {
@@ -1097,15 +1129,21 @@ private fun MineStudyApp() {
                         }
                     }
                     "my_batches" -> {
-                        Text("My batches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("Your saved study batches", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("My batches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                Text("${savedBatchIds.size} saved ${if (savedBatchIds.size == 1) "batch" else "batches"}", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                            }
+                            TextButton(onClick = { screen = "all_batches" }) { Text("Find batches") }
+                        }
+                        Spacer(Modifier.height(10.dp))
                         OutlinedTextField(
                             value = manualBatchId,
                             onValueChange = { manualBatchId = it; batchSearchError = "" },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
-                            label = { Text("Add batch manually") },
+                            shape = RoundedCornerShape(14.dp),
+                            label = { Text("Add batch by ID") },
                             placeholder = { Text("Paste batch ID") },
                             trailingIcon = {
                                 IconButton(onClick = { addManualBatch() }, enabled = manualBatchId.isNotBlank()) {
@@ -1113,25 +1151,50 @@ private fun MineStudyApp() {
                                 }
                             }
                         )
-                        Text("Add a batch ID directly if it is missing from All batches. You can check/open it after saving.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                        Text("Use this if a batch isn't listed in All batches.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                         if (batchSearchError.isNotBlank()) Text(batchSearchError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
+                        Spacer(Modifier.height(10.dp))
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
                             items(savedBatchIds.sorted(), key = { it }) { id ->
                                 val info = savedBatchInfo[id] ?: BatchInfo(id, "Saved batch")
-                                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(14.dp)) {
-                                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        BatchThumbnail(info.thumbnail, Modifier.size(width = 88.dp, height = 68.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(info.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                            if (info.language.isNotBlank()) Text(info.language, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                                            Text(id, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(18.dp)) {
+                                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            BatchThumbnail(info.thumbnail, Modifier.size(width = 112.dp, height = 82.dp))
+                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                                Text(info.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                                if (info.language.isNotBlank() || info.className.isNotBlank()) {
+                                                    Text(listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · "), color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                }
+                                                Text(id, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                if (batch == id) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                    Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF71D6C5), modifier = Modifier.size(14.dp))
+                                                    Text("Currently selected", color = Color(0xFF71D6C5), style = MaterialTheme.typography.labelSmall)
+                                                }
+                                            }
                                         }
-                                        if (batch == id) Icon(Icons.Default.CheckCircle, "Current batch", tint = Color(0xFF71D6C5), modifier = Modifier.padding(end = 6.dp))
-                                        Button(onClick = { openBatch(info) }, enabled = !busy) { Text(if (batch == id) "Open" else "Check") }
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Button(onClick = { openBatch(info) }, enabled = !busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                                                Text(if (batch == id) "Open batch" else "Check & switch")
+                                            }
+                                            OutlinedButton(onClick = { batchPendingRemoval = id }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF8A8A))) {
+                                                Icon(Icons.Default.DeleteOutline, null, modifier = Modifier.size(18.dp))
+                                                Spacer(Modifier.width(6.dp))
+                                                Text("Remove")
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            if (savedBatchIds.isEmpty()) item { Text("No saved batches yet. Find one in All batches.", color = Color.Gray) }
+                            if (savedBatchIds.isEmpty()) item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(16.dp)) {
+                                    Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Icon(Icons.Default.FolderOpen, null, tint = Color(0xFF9B8CFF), modifier = Modifier.size(32.dp))
+                                        Text("No saved batches yet", fontWeight = FontWeight.SemiBold)
+                                        Text("Search All batches or add a batch ID above.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
                         }
                     }
                     "subjects" -> ItemList("Subjects", subjects, busy, error, showSubjectStars = true, starredSubjectIds = starredSubjectIds, onToggleStar = ::toggleSubjectStar, onSelect = { loadChapters(it) }, onRetry = { loadSubjects() })
