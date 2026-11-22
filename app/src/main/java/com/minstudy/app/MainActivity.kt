@@ -77,6 +77,9 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -217,16 +220,37 @@ private class StudyApi(private val context: Context) {
         val batches = (0 until array.length()).mapNotNull { index ->
             val item = array.optJSONObject(index) ?: return@mapNotNull null
             val id = item.optString("_id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val thumbnail = listOf("thumbnail", "thumbnailUrl", "image", "imageUrl", "coverImage", "cover", "banner", "bannerImage", "batchImage", "logo", "photo", "photoUrl", "cover_image", "thumbnail_url")
-                .firstNotNullOfOrNull { key ->
-                    when (val value = item.opt(key)) {
-                        is String -> value.takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) }
-                        is JSONObject -> listOf("url", "secure_url", "src", "link").firstNotNullOfOrNull { nested ->
-                            value.optString(nested).takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) }
+            val thumbnailKeys = listOf(
+                "thumbnail", "thumbnailurl", "thumbnail_url", "thumb", "thumburl", "thumb_url",
+                "image", "imageurl", "image_url", "coverimage", "cover_image", "cover", "banner",
+                "bannerimage", "banner_image", "batchimage", "batch_image", "logo", "photo",
+                "photourl", "photo_url", "poster", "avatar", "picture"
+            )
+            fun findImage(value: Any?, depth: Int = 0): String? {
+                if (depth > 5 || value == null || value == JSONObject.NULL) return null
+                if (value is String) {
+                    val candidate = value.trim()
+                    return candidate.takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) }
+                }
+                if (value is JSONObject) {
+                    for (key in thumbnailKeys) {
+                        val keys = value.keys()
+                        while (keys.hasNext()) {
+                            val actual = keys.next()
+                            if (actual.equals(key, true)) {
+                                findImage(value.opt(actual), depth + 1)?.let { return it }
+                            }
                         }
-                        else -> null
                     }
-                }.orEmpty()
+                    val keys = value.keys()
+                    while (keys.hasNext()) findImage(value.opt(keys.next()), depth + 1)?.let { return it }
+                }
+                if (value is JSONArray) {
+                    for (index in 0 until value.length()) findImage(value.opt(index), depth + 1)?.let { return it }
+                }
+                return null
+            }
+            val thumbnail = findImage(item).orEmpty()
             BatchInfo(id, item.optString("name", "Unnamed batch"), item.optString("lang", ""), item.optString("class", ""), thumbnail)
         }
         return batches to (payload.optJSONObject("pagination")?.optInt("totalPages", 1)?.coerceAtLeast(1) ?: 1)
@@ -1086,10 +1110,23 @@ private fun MineStudyApp() {
                             onValueChange = { batchSearchText = it },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = {
+                                batchSearchResults = emptyList()
+                                batchSearchPage = 1
+                                batchSearchExecuted = false
+                                searchBatches(1)
+                            }),
                             label = { Text("Search UPSC batches") },
                             placeholder = { Text("e.g. Prarambh 2027") },
                             trailingIcon = {
-                                IconButton(onClick = { batchSearchResults = emptyList(); searchBatches(1) }, enabled = !batchSearchLoading) {
+                                IconButton(onClick = {
+                                    batchSearchResults = emptyList()
+                                    batchSearchPage = 1
+                                    batchSearchExecuted = false
+                                    searchBatches(1)
+                                }, enabled = !batchSearchLoading) {
                                     Icon(Icons.Default.Search, contentDescription = "Search batches")
                                 }
                             }
@@ -1099,18 +1136,39 @@ private fun MineStudyApp() {
                         if (batchSearchLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
                             items(batchSearchResults, key = { it.id }) { info ->
-                                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(14.dp)) {
-                                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        BatchThumbnail(info.thumbnail, Modifier.size(width = 104.dp, height = 76.dp))
-                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                            Text(info.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                            Text(listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · "), color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                                            Text(info.id, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            OutlinedButton(onClick = { saveBatchInfo(info) }, enabled = info.id !in savedBatchIds) {
-                                                Text(if (info.id in savedBatchIds) "Added to My batches" else "Add batch")
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            BatchThumbnail(info.thumbnail, Modifier.size(width = 100.dp, height = 82.dp))
+                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Text(info.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                                val details = listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
+                                                if (details.isNotBlank()) Text(details, color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text("ID: ${info.id}", color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
-                                            Button(onClick = { openBatch(info) }, enabled = !busy) { Text(if (batch == info.id) "Open batch" else "Check batch") }
+                                        }
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            OutlinedButton(
+                                                onClick = { saveBatchInfo(info) },
+                                                enabled = info.id !in savedBatchIds,
+                                                modifier = Modifier.weight(1f).height(46.dp),
+                                                shape = RoundedCornerShape(12.dp),
+                                                contentPadding = PaddingValues(horizontal = 8.dp)
+                                            ) {
+                                                Text(if (info.id in savedBatchIds) "Saved" else "Add batch", maxLines = 1)
+                                            }
+                                            Button(
+                                                onClick = { openBatch(info) },
+                                                enabled = !busy,
+                                                modifier = Modifier.weight(1f).height(46.dp),
+                                                shape = RoundedCornerShape(12.dp),
+                                                contentPadding = PaddingValues(horizontal = 8.dp)
+                                            ) {
+                                                Text(if (batch == info.id) "Open batch" else "Check batch", maxLines = 1)
                                             }
                                         }
                                     }
