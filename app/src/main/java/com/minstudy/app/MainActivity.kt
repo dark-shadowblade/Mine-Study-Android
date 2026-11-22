@@ -323,6 +323,8 @@ private fun MineStudyApp() {
     var keyStatus by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
     var downloadRecords by remember { mutableStateOf(DownloadRepository.list(context)) }
+    var openedPdfUri by remember { mutableStateOf<Uri?>(null) }
+    var openedPdfTitle by remember { mutableStateOf("") }
     var pendingDownloadTitle by remember { mutableStateOf("") }
     var pendingDownloadCategory by remember { mutableStateOf("") }
     var pendingDownloadKey by remember { mutableStateOf("") }
@@ -581,6 +583,7 @@ private fun MineStudyApp() {
     fun goBack() {
         screen = when (screen) {
             "player" -> "contents"
+            "pdf" -> "downloads"
             "contents" -> "chapters"
             "chapters" -> "home"
             else -> "home"
@@ -788,21 +791,30 @@ private fun MineStudyApp() {
                         onTogglePause = { if (downloadState.paused) DownloadService.resume(context) else DownloadService.pause(context) },
                         onCancel = { DownloadService.cancel(context) },
                         onOpen = { record ->
-                            try {
-                                context.startActivity(Intent(Intent.ACTION_VIEW)
-                                    .setDataAndType(Uri.parse(record.uri), record.mime)
-                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                            } catch (_: Exception) {
-                                Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
+                            if (record.mime.startsWith("video")) {
+                                currentVideo = record.uri
+                                currentTitle = record.name.substringBeforeLast('.')
+                                currentItemIndex = -1
+                                screen = "player"
+                            } else {
+                                openedPdfUri = Uri.parse(record.uri)
+                                openedPdfTitle = record.name.substringBeforeLast('.')
+                                screen = "pdf"
                             }
                         },
-                        onDelete = { record ->
-                            DownloadRepository.delete(context, record)
+                        onDelete = { selectedRecords ->
+                            selectedRecords.forEach { DownloadRepository.delete(context, it) }
                             downloadRecords = DownloadRepository.list(context)
-                            Toast.makeText(context, "Download deleted", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "\${selectedRecords.size} download(s) deleted", Toast.LENGTH_SHORT).show()
                         },
                         onRefresh = { downloadRecords = DownloadRepository.list(context) }
                     )
+                    "pdf" -> openedPdfUri?.let { uri ->
+                        PdfViewerScreen(uri, openedPdfTitle) {
+                            screen = "downloads"
+                            downloadRecords = DownloadRepository.list(context)
+                        }
+                    }
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
                 if (error.isNotBlank()) {
