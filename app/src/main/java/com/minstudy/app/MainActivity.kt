@@ -346,6 +346,11 @@ private fun MineStudyApp() {
     var pendingDownloadKey by remember { mutableStateOf("") }
     var pendingDownloadKeys by remember { mutableStateOf(setOf<String>()) }
     val downloadState by DownloadService.state.collectAsState()
+    LaunchedEffect(downloadState.queueItems) {
+        // A task disappears from the queue only after its MediaStore entry and
+        // download record have been finalized. Refresh icons without a manual reload.
+        downloadRecords = DownloadRepository.list(context)
+    }
     LaunchedEffect(downloadState.queueItems, downloadState.status) {
         val queueKeys = downloadState.queueItems.map { it.itemKey }.filter { it.isNotBlank() }.toSet()
         if (queueKeys.isNotEmpty()) pendingDownloadKeys = pendingDownloadKeys - queueKeys
