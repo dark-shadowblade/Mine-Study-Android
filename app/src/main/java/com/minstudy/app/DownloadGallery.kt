@@ -649,6 +649,7 @@ fun DownloadCenterScreen(
                 }
             }
         }
+    }
     if (confirmAction.isNotEmpty()) {
         val clearing = confirmAction == "clear"
         androidx.compose.material3.AlertDialog(
@@ -663,6 +664,5 @@ fun DownloadCenterScreen(
             },
             dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmAction = "" }) { androidx.compose.material3.Text("Keep") } }
         )
-    }
     }
 }
