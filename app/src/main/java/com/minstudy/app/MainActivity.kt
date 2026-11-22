@@ -20,6 +20,8 @@ import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -44,6 +46,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.VolumeDown
+import androidx.compose.material.icons.filled.VolumeMute
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -51,6 +55,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
@@ -984,6 +990,8 @@ private fun VideoScreen(
     val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
     var volume by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
+    var volumePanel by remember { mutableStateOf(false) }
+    var previousVolume by remember { mutableIntStateOf(volume.coerceAtLeast(1)) }
 
     val player = remember(url, playbackKey) {
         val mediaUri = Uri.parse(url)
@@ -1073,37 +1081,66 @@ private fun VideoScreen(
     @Composable
     fun SpeedPicker() {
         Box {
-            TextButton(onClick = { speedMenu = true }, contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp)) {
-                Text("${playbackSpeed}×", color = Color.White, fontWeight = FontWeight.Bold)
+            TextButton(onClick = { speedMenu = !speedMenu }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                Text(if (playbackSpeed == 1f) "1×" else "${playbackSpeed}×", color = Color.White, fontWeight = FontWeight.SemiBold)
             }
-            DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
-                listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 3.5f, 4f).forEach { speed ->
-                    DropdownMenuItem(text = { Text("${speed}×") }, onClick = { setSpeed(speed) })
+            if (speedMenu) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopEnd).offset(y = 38.dp).width(104.dp),
+                    color = Color(0xF0202020), shape = RoundedCornerShape(10.dp), shadowElevation = 8.dp
+                ) {
+                    Column(Modifier.heightIn(max = 260.dp)) {
+                        listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 3.5f, 4f).forEach { speed ->
+                            Text(
+                                text = (if (speed == playbackSpeed) "✓  " else "    ") + "${speed}×",
+                                color = Color.White, style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.fillMaxWidth().clickable { setSpeed(speed) }.padding(horizontal = 12.dp, vertical = 7.dp)
+                            )
+                        }
+                        Text("Custom…", color = Color(0xFFC5B9FF), style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                speedText = playbackSpeed.toString()
+                                speedMenu = false
+                                speedDialog = true
+                            }.padding(horizontal = 12.dp, vertical = 8.dp))
+                    }
                 }
-                DropdownMenuItem(text = { Text("Custom…") }, onClick = {
-                    speedText = playbackSpeed.toString()
-                    speedMenu = false
-                    speedDialog = true
-                })
             }
         }
     }
 
     @Composable
     fun SeekBar(compact: Boolean = false) {
-        Column(verticalArrangement = Arrangement.spacedBy(if (compact) 0.dp else 2.dp)) {
-            Slider(
-                value = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs).toFloat() else 0f,
-                onValueChange = { isScrubbing = true; positionMs = it.toLong() },
-                onValueChangeFinished = { player.seekTo(positionMs); isScrubbing = false },
-                valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
-                enabled = durationMs > 0L,
-                modifier = Modifier.fillMaxWidth().height(18.dp).graphicsLayer { scaleY = 0.28f }
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatTime(positionMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
-                Text(formatTime(durationMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
-            }
+        Canvas(
+            Modifier.fillMaxWidth().height(if (compact) 22.dp else 26.dp)
+                .pointerInput(durationMs) {
+                    detectTapGestures { point ->
+                        if (durationMs > 0L) {
+                            positionMs = ((point.x / size.width).coerceIn(0f, 1f) * durationMs).toLong()
+                            player.seekTo(positionMs)
+                        }
+                    }
+                }
+                .pointerInput(durationMs) {
+                    detectDragGestures(
+                        onDragStart = { isScrubbing = true },
+                        onDragEnd = { player.seekTo(positionMs); isScrubbing = false },
+                        onDragCancel = { isScrubbing = false },
+                        onDrag = { change, _ ->
+                            if (durationMs > 0L) {
+                                positionMs = ((change.position.x / size.width).coerceIn(0f, 1f) * durationMs).toLong()
+                                change.consume()
+                            }
+                        }
+                    )
+                }
+        ) {
+            val centerY = size.height / 2f
+            val fraction = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs).toFloat() / durationMs else 0f
+            val endX = size.width * fraction
+            drawLine(Color.White.copy(alpha = 0.42f), Offset(0f, centerY), Offset(size.width, centerY), 3.dp.toPx(), cap = StrokeCap.Round)
+            drawLine(Color(0xFFFF0033), Offset(0f, centerY), Offset(endX, centerY), 3.dp.toPx(), cap = StrokeCap.Round)
+            drawCircle(Color(0xFFFF0033), 5.dp.toPx(), Offset(endX.coerceIn(5.dp.toPx(), (size.width - 5.dp.toPx()).coerceAtLeast(5.dp.toPx())), centerY))
         }
     }
 
@@ -1193,19 +1230,41 @@ private fun VideoScreen(
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 SeekBar(compact = true)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Icon(Icons.Default.VolumeUp, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Slider(
-                        value = volume.toFloat(),
-                        onValueChange = {
-                            volume = it.toInt().coerceIn(0, maxVolume)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(formatTime(positionMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text("/", color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.labelSmall)
+                    Text(formatTime(durationMs), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            if (volume > 0) { previousVolume = volume; volume = 0 }
+                            else volume = previousVolume.coerceIn(1, maxVolume)
                             audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
-                        },
-                        valueRange = 0f..maxVolume.toFloat(),
-                        modifier = Modifier.width(132.dp).height(18.dp).graphicsLayer { scaleY = 0.28f }
-                    )
+                        }, modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            when { volume == 0 -> Icons.Default.VolumeMute; volume < maxVolume / 2 -> Icons.Default.VolumeDown; else -> Icons.Default.VolumeUp },
+                            "Mute or restore volume", tint = Color.White, modifier = Modifier.size(19.dp)
+                        )
+                    }
+                    if (volumePanel) {
+                        Slider(
+                            value = volume.toFloat(),
+                            onValueChange = {
+                                volume = it.toInt().coerceIn(0, maxVolume)
+                                if (volume > 0) previousVolume = volume
+                                audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                            },
+                            valueRange = 0f..maxVolume.toFloat(),
+                            modifier = Modifier.width(104.dp).height(24.dp),
+                            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.35f))
+                        )
+                    }
+                    IconButton(onClick = { volumePanel = !volumePanel }, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Default.Settings, "Volume settings", tint = if (volumePanel) Color(0xFFFF0033) else Color.White, modifier = Modifier.size(17.dp))
+                    }
                 }
             }
         }
@@ -1271,7 +1330,6 @@ private fun VideoScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.ArrowBack, "Back to lessons") }
                 Text("NOW PLAYING", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.2.sp, modifier = Modifier.weight(1f))
-                SpeedPicker()
                 IconButton(onClick = { fullScreen = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.Fullscreen, "Fullscreen") }
             }
             Box(
