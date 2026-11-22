@@ -539,3 +539,105 @@ private fun formatDownloadBytes(bytes: Long): String {
     return if (mb >= 1024.0) String.format(java.util.Locale.US, "%.2f GB", mb / 1024.0)
     else String.format(java.util.Locale.US, "%.1f MB", mb)
 }
+
+
+@androidx.compose.runtime.Composable
+fun DownloadCenterScreen(
+    queueItems: List<DownloadQueueEntry>,
+    maxParallel: Int,
+    runningCount: Int,
+    queuedCount: Int,
+    onSetParallel: (Int) -> Unit,
+    onPause: (String) -> Unit,
+    onResume: (String) -> Unit,
+    onMove: (String, String) -> Unit,
+    onRemove: (String) -> Unit,
+    onCancelAll: () -> Unit,
+    onOpenGallery: () -> Unit
+) {
+    androidx.compose.foundation.lazy.LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)
+    ) {
+        item {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth()) {
+                androidx.compose.material3.Text("Download Center", style = androidx.compose.material3.MaterialTheme.typography.headlineSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                androidx.compose.material3.Text("Manage active downloads and queue", color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+            }
+        }
+        item {
+            androidx.compose.material3.Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)) {
+                androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                    androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                            androidx.compose.material3.Text("Parallel downloads", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            androidx.compose.material3.Text("Choose how many files can download at once", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        androidx.compose.material3.Text("$maxParallel", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    }
+                    androidx.compose.material3.Slider(value = maxParallel.toFloat(), onValueChange = { onSetParallel(it.toInt().coerceIn(1, 5)) }, valueRange = 1f..5f, steps = 3)
+                    androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween) {
+                        (1..5).forEach { value -> androidx.compose.material3.TextButton(onClick = { onSetParallel(value) }) { androidx.compose.material3.Text("$value") } }
+                    }
+                    androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween) {
+                        androidx.compose.material3.Text("$runningCount active", style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
+                        androidx.compose.material3.Text("$queuedCount queued", style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+        item {
+            androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                androidx.compose.material3.Text("Download queue", Modifier.weight(1f), style = androidx.compose.material3.MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                if (queueItems.isNotEmpty()) androidx.compose.material3.TextButton(onClick = onCancelAll) { androidx.compose.material3.Text("Cancel all", color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
+            }
+        }
+        if (queueItems.isEmpty()) {
+            item {
+                androidx.compose.material3.Card {
+                    androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+                        androidx.compose.material3.Icon(Icons.Default.ArrowForward, null, tint = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                        androidx.compose.material3.Text("No active or queued downloads", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                        androidx.compose.material3.Text("Start a lecture, notes or DPP download and it will appear here.", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        } else {
+            items(queueItems, key = { it.id }) { item ->
+                androidx.compose.material3.Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)) {
+                    androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+                        androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                                androidx.compose.material3.Text(item.title, maxLines = 2, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                androidx.compose.material3.Text(if (item.paused) "Paused • slot released" else if (item.active) "Downloading" else "Queued • ${item.category}", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (item.active) {
+                                androidx.compose.material3.IconButton(onClick = { if (item.paused) onResume(item.id) else onPause(item.id) }) {
+                                    androidx.compose.material3.Icon(if (item.paused) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = if (item.paused) "Resume" else "Pause")
+                                }
+                            } else {
+                                androidx.compose.material3.IconButton(onClick = { onRemove(item.id) }) {
+                                    androidx.compose.material3.Icon(Icons.Default.Close, contentDescription = "Remove from queue", tint = androidx.compose.material3.MaterialTheme.colorScheme.error)
+                                }
+                                androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(0.dp)) {
+                                    androidx.compose.material3.TextButton(onClick = { onMove(item.id, "top") }) { androidx.compose.material3.Text("Top") }
+                                    androidx.compose.material3.TextButton(onClick = { onMove(item.id, "up") }) { androidx.compose.material3.Text("↑") }
+                                    androidx.compose.material3.TextButton(onClick = { onMove(item.id, "down") }) { androidx.compose.material3.Text("↓") }
+                                    androidx.compose.material3.TextButton(onClick = { onMove(item.id, "bottom") }) { androidx.compose.material3.Text("End") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            androidx.compose.material3.OutlinedButton(onClick = onOpenGallery, modifier = Modifier.fillMaxWidth()) {
+                androidx.compose.material3.Icon(Icons.Default.MenuBook, contentDescription = null)
+                androidx.compose.foundation.layout.Spacer(Modifier.width(8.dp))
+                androidx.compose.material3.Text("Open Downloads Gallery")
+            }
+        }
+    }
+}
