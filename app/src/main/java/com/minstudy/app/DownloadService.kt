@@ -29,7 +29,8 @@ data class DownloadUiState(
     val total: Long = -1L,
     val speed: Long = 0L,
     val title: String = "",
-    val category: String = ""
+    val category: String = "",
+    val itemKey: String = ""
 )
 
 class DownloadService : Service() {
@@ -44,16 +45,18 @@ class DownloadService : Service() {
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_CATEGORY = "category"
         private const val EXTRA_VIDEO = "video"
+        private const val EXTRA_ITEM_KEY = "item_key"
         private val mutableState = MutableStateFlow(DownloadUiState())
         val state = mutableState.asStateFlow()
 
-        fun start(context: Context, url: String, title: String, category: String, video: Boolean) {
+        fun start(context: Context, url: String, title: String, category: String, video: Boolean, itemKey: String) {
             val intent = Intent(context, DownloadService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_URL, url)
                 putExtra(EXTRA_TITLE, title)
                 putExtra(EXTRA_CATEGORY, category)
                 putExtra(EXTRA_VIDEO, video)
+                putExtra(EXTRA_ITEM_KEY, itemKey)
             }
             ContextCompat.startForegroundService(context, intent)
         }
@@ -107,6 +110,7 @@ class DownloadService : Service() {
         currentTitle = intent.getStringExtra(EXTRA_TITLE) ?: "Study material"
         val category = intent.getStringExtra(EXTRA_CATEGORY) ?: "Lectures"
         val video = intent.getBooleanExtra(EXTRA_VIDEO, true)
+        val itemKey = intent.getStringExtra(EXTRA_ITEM_KEY).orEmpty()
         if (url.isBlank()) {
             mutableState.value = DownloadUiState(status = "Download failed: URL missing")
             stopSelf()
@@ -115,25 +119,25 @@ class DownloadService : Service() {
         control = DownloadControl()
         lastProgressAt = System.currentTimeMillis()
         lastProgressBytes = 0L
-        mutableState.value = DownloadUiState(status = "Preparing • $currentTitle", active = true, title = currentTitle, category = category)
+        mutableState.value = DownloadUiState(status = "Preparing • $currentTitle", active = true, title = currentTitle, category = category, itemKey = itemKey)
         startForegroundCompat(buildNotification())
         serviceScope.launch {
             try {
                 mutableState.value = mutableState.value.copy(status = "Downloading • $currentTitle")
                 val record = DownloadRepository.download(
-                    this@DownloadService, url, currentTitle, category, video, control!!
+                    this@DownloadService, url, currentTitle, category, video, itemKey, control!!
                 ) { bytes, total ->
                     val now = System.currentTimeMillis()
                     val elapsed = (now - lastProgressAt).coerceAtLeast(1L)
                     val speed = if (elapsed >= 700L) ((bytes - lastProgressBytes) * 1000L / elapsed).coerceAtLeast(0L) else mutableState.value.speed
-                    mutableState.value = mutableState.value.copy(bytes = bytes, total = total, speed = speed)
+                    mutableState.value = mutableState.value.copy(bytes = bytes, total = total, speed = speed, itemKey = itemKey)
                     if (elapsed >= 700L) {
                         lastProgressAt = now
                         lastProgressBytes = bytes
                         updateNotification()
                     }
                 }
-                mutableState.value = DownloadUiState(status = "Download complete • ${record.name}", bytes = record.bytes, total = record.bytes, title = currentTitle, category = category)
+                mutableState.value = DownloadUiState(status = "Download complete • ${record.name}", bytes = record.bytes, total = record.bytes, title = currentTitle, category = category, itemKey = itemKey)
                 updateNotification(completed = true)
             } catch (e: CancellationException) {
                 mutableState.value = DownloadUiState(status = "Download cancelled • $currentTitle", title = currentTitle, category = category)
