@@ -249,12 +249,14 @@ private fun MineStudyApp() {
     var downloadRecords by remember { mutableStateOf(DownloadRepository.list(context)) }
     var pendingDownloadTitle by remember { mutableStateOf("") }
     var pendingDownloadCategory by remember { mutableStateOf("") }
+    var pendingDownloadKey by remember { mutableStateOf("") }
     val downloadState by DownloadService.state.collectAsState()
     LaunchedEffect(downloadState.active, downloadState.status) {
         if (downloadState.active || downloadState.status.startsWith("Download complete") ||
             downloadState.status.startsWith("Download failed") || downloadState.status.startsWith("Download cancelled")) {
             pendingDownloadTitle = ""
             pendingDownloadCategory = ""
+            pendingDownloadKey = ""
         }
         if (downloadState.status.startsWith("Download complete")) {
             downloadRecords = DownloadRepository.list(context)
@@ -343,22 +345,34 @@ private fun MineStudyApp() {
         title: String,
         category: String,
         isVideo: Boolean,
+        itemKey: String,
         resolveUrl: suspend () -> String?
     ) {
         if (downloadState.active) {
             Toast.makeText(context, "A download is already running", Toast.LENGTH_SHORT).show()
             return
         }
+        val existing = DownloadRepository.list(context).any { record ->
+            record.category == category && (record.itemKey == itemKey ||
+                (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(title.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim(), true)))
+        }
+        if (existing) {
+            Toast.makeText(context, "Already downloaded", Toast.LENGTH_SHORT).show()
+            downloadRecords = DownloadRepository.list(context)
+            return
+        }
         pendingDownloadTitle = title
         pendingDownloadCategory = category
+        pendingDownloadKey = itemKey
         scope.launch {
             try {
                 val sourceUrl = resolveUrl()
                 if (sourceUrl.isNullOrBlank()) throw IllegalStateException("Download URL is missing")
-                DownloadService.start(context, sourceUrl, title, category, isVideo)
+                DownloadService.start(context, sourceUrl, title, category, isVideo, itemKey)
             } catch (e: Exception) {
                 pendingDownloadTitle = ""
                 pendingDownloadCategory = ""
+                pendingDownloadKey = ""
                 error = "Could not start download: ${e.message ?: "Unknown error"}"
             }
         }
@@ -368,8 +382,10 @@ private fun MineStudyApp() {
         val item = contents.getOrNull(index) ?: return
         val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
         val cleanTitle = item.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+        val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}"
         val localCopy = DownloadRepository.list(context).firstOrNull { record ->
-            record.category == category && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)
+            record.category == category && (record.itemKey == itemKey ||
+                (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)))
                 && record.mime.startsWith("video/")
         }
         // Prefer the completed local file. Only resolve the online stream when no
@@ -497,6 +513,8 @@ private fun MineStudyApp() {
                             downloadRecords = downloadRecords,
                             activeDownloadTitle = if (downloadState.active) downloadState.title else pendingDownloadTitle,
                             activeDownloadCategory = if (downloadState.active) downloadState.category else pendingDownloadCategory,
+                            activeDownloadKey = if (downloadState.active) downloadState.itemKey else pendingDownloadKey,
+                            downloadItemKey = { item -> "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}" },
                             activeDownloadPercent = if (downloadState.active && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
                             onDownload = { item ->
                                 val video = type == "videos" || type == "DppVideos"
@@ -507,7 +525,8 @@ private fun MineStudyApp() {
                                     "DppVideos" -> "DPP Videos"
                                     else -> type
                                 }
-                                startDownload(item.title, category, video) {
+                                val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}"
+                                startDownload(item.title, category, video, itemKey) {
                                     if (video) {
                                         val detailPath = "/batch/" + api.batchId + "/subject/" + enc(selectedSubject!!.id) +
                                             "/chapter/" + enc(selectedChapter!!.id) + "/content/" + enc(item.id)
@@ -525,9 +544,10 @@ private fun MineStudyApp() {
                                         else -> type
                                     }
                                     val cleanTitle = item.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                                    val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}"
                                     val localCopy = downloadRecords.firstOrNull { record ->
-                                        record.category == category && record.name.substringBeforeLast('.')
-                                            .equals(cleanTitle, ignoreCase = true) && record.mime == "application/pdf"
+                                        record.category == category && (record.itemKey == itemKey ||
+                                            (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true))) && record.mime == "application/pdf"
                                     }
                                     if (localCopy != null) {
                                         // Open the saved PDF URI; no API/CDN request is made.
@@ -548,12 +568,17 @@ private fun MineStudyApp() {
                         onPrevious = { playLecture(currentItemIndex + 1) },
                         onNext = { playLecture(currentItemIndex - 1) },
                         onBack = { screen = "contents" },
-                        isDownloaded = downloadRecords.any { record -> record.category == (if (type == "DppVideos") "DPP Videos" else "Lectures") && record.name.substringBeforeLast('.').equals(currentTitle.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim(), true) },
-                        downloadPercent = if (downloadState.active && downloadState.title == currentTitle && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
-                        isDownloading = (downloadState.active && downloadState.title == currentTitle) || (pendingDownloadTitle == currentTitle),
+                        isDownloaded = downloadRecords.any { record ->
+                            record.category == (if (type == "DppVideos") "DPP Videos" else "Lectures") &&
+                                (record.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}" ||
+                                    (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(currentTitle.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim(), true)))
+                        },
+                        downloadPercent = if (downloadState.active && downloadState.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}" && downloadState.total > 0L) ((downloadState.bytes * 100L) / downloadState.total).toInt().coerceIn(0, 100) else 0,
+                        isDownloading = (downloadState.active && downloadState.itemKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}") || (pendingDownloadKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}"),
                         onDownload = {
                             val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
-                            startDownload(currentTitle, category, true) { currentVideo }
+                            val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}"
+                            startDownload(currentTitle, category, true, itemKey) { currentVideo }
                         }
                     )
                     "downloads" -> DownloadGallery(
@@ -711,6 +736,8 @@ private fun ItemList(
     downloadRecords: List<DownloadRecord> = emptyList(),
     activeDownloadTitle: String = "",
     activeDownloadCategory: String = "",
+    activeDownloadKey: String = "",
+    downloadItemKey: (StudyItem) -> String = { it.id },
     activeDownloadPercent: Int = 0,
     onDownload: ((StudyItem) -> Unit)? = null,
     onSelect: (StudyItem) -> Unit, onRetry: () -> Unit
@@ -776,10 +803,12 @@ private fun ItemList(
                         }
                         if (onDownload != null) {
                             val cleanTitle = item.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+                            val itemKey = downloadItemKey(item)
                             val downloaded = downloadRecords.any { record ->
-                                record.category == downloadCategory && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)
+                                record.category == downloadCategory && (record.itemKey == itemKey ||
+                                    (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)))
                             }
-                            val downloading = activeDownloadTitle == item.title && activeDownloadCategory == downloadCategory
+                            val downloading = activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory
                             IconButton(
                                 onClick = { if (!downloaded && !downloading) onDownload(item) },
                                 enabled = !downloaded && !downloading,
