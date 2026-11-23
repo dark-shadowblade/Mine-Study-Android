@@ -20,6 +20,7 @@ import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -90,6 +92,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import androidx.lifecycle.lifecycleScope
 import com.google.android.exoplayer2.ExoPlayer
+import com.google.android.exoplayer2.DefaultLoadControl
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.ui.PlayerView
@@ -450,7 +453,7 @@ private fun MineStudyApp() {
     var error by remember { mutableStateOf("") }
     var keyLink by remember { mutableStateOf("") }
     var keyStatus by remember { mutableStateOf("") }
-    var showSettings by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(apiKey.isBlank()) }
     var downloadRecords by remember { mutableStateOf(DownloadRepository.list(context)) }
     var openedPdfUri by remember { mutableStateOf<Uri?>(null) }
     var openedPdfTitle by remember { mutableStateOf("") }
@@ -515,21 +518,21 @@ private fun MineStudyApp() {
     // close Settings just because the user opened the dialog.
     LaunchedEffect(apiKey, batch, showSettings) {
         if (showSettings && apiKey.isNotBlank() && apiKey.trim() != api.apiKey.trim()) {
-            delay(700)
+            keyStatus = "Verifying..."
+            delay(500)
             api.batchId = batch
             try {
-                val count = api.verifyKey(apiKey) { keyStatus = it }
+                val count = api.verifyKey(apiKey) { status -> keyStatus = status }
                 api.apiKey = apiKey.trim()
-                keyStatus = "Verified · $count subjects found"
+                keyStatus = "Verified"
                 error = ""
                 showSettings = false
                 loadSubjects()
             } catch (e: Exception) {
-                keyStatus = e.message ?: "API key verification failed"
+                keyStatus = "Key verification failed. Tap Generate and paste a new key."
             }
         }
     }
-
     fun loadChapters(subject: StudyItem) {
         val requestedBatch = api.batchId
         if (selectedSubject?.id == subject.id && loadedChaptersSubjectId == subject.id &&
@@ -894,6 +897,19 @@ private fun MineStudyApp() {
         }
     }
 
+    fun cancelBatchSearch() {
+        batchSearchJob?.cancel()
+        batchSearchGeneration++
+        batchSearchLoading = false
+        batchSearchError = ""
+        batchSearchText = ""
+        batchSearchResults = emptyList()
+        batchSearchPage = 1
+        batchSearchTotalPages = 1
+        batchSearchExecuted = false
+        scope.launch { batchListState.scrollToItem(0) }
+    }
+
     fun searchBatches(page: Int = 1) {
         if (apiKey.isBlank()) {
             batchSearchError = "Add and verify your API key in Settings first."
@@ -1049,17 +1065,13 @@ private fun MineStudyApp() {
                             IconButton(onClick = { screen = "download_center" }) {
                                 Icon(Icons.Default.Download, contentDescription = "Download Center")
                             }
-                            IconButton(onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = "Downloads")
-                            }
-                            IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0B0D14))
                     )
                 }
             },
             bottomBar = {
-                if (screen in setOf("home", "all_batches", "my_batches")) {
+                if (screen in setOf("home", "all_batches", "my_batches", "downloads")) {
                     NavigationBar(containerColor = Color(0xFF111622)) {
                         NavigationBarItem(
                             selected = screen == "home",
@@ -1071,13 +1083,19 @@ private fun MineStudyApp() {
                             selected = screen == "all_batches",
                             onClick = { screen = "all_batches" },
                             icon = { Icon(Icons.Default.Search, contentDescription = null) },
-                            label = { Text("All batches") }
+                            label = { Text("Batches") }
                         )
                         NavigationBarItem(
                             selected = screen == "my_batches",
                             onClick = { screen = "my_batches" },
                             icon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
                             label = { Text("My batches") }
+                        )
+                        NavigationBarItem(
+                            selected = screen == "downloads",
+                            onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" },
+                            icon = { Icon(Icons.Default.Download, contentDescription = null) },
+                            label = { Text("Gallery") }
                         )
                     }
                 }
@@ -1091,99 +1109,75 @@ private fun MineStudyApp() {
                             Card(
                                 Modifier.fillMaxWidth(),
                                 colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)),
-                                shape = RoundedCornerShape(22.dp)
+                                shape = RoundedCornerShape(18.dp)
                             ) {
-                                Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Box(
-                                        Modifier.size(52.dp).background(Color(0xFF292641), RoundedCornerShape(16.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(Icons.Default.Key, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(26.dp))
+                                Row(
+                                    Modifier.fillMaxWidth().clickable { showSettings = true }.padding(horizontal = 16.dp, vertical = 15.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Icon(Icons.Default.Key, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(22.dp))
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text("Connect API key", fontWeight = FontWeight.SemiBold)
+                                        Text("Set up access to your batches and lectures", color = Color(0xFF9AA5BA), style = MaterialTheme.typography.bodySmall)
                                     }
-                                    Text("Your study space starts here", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                    Text("Connect your API key to load batches, subjects and lectures.", color = Color(0xFFADB7C8), style = MaterialTheme.typography.bodyMedium)
-                                    Button(onClick = { showSettings = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
-                                        Icon(Icons.Default.Settings, null, modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Set up API key")
-                                    }
+                                    Icon(Icons.Default.ArrowForward, null, tint = Color(0xFF9AA5BA))
                                 }
                             }
                         } else {
                             val currentBatchInfo = savedBatchInfo[batch] ?: BatchInfo(batch, "Selected batch")
-                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Text("YOUR LEARNING SPACE", color = Color(0xFF9B8CFF), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.6.sp, fontWeight = FontWeight.Bold)
-                                    Text("Ready to study?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
-                                    Text("Pick up where you left off or explore a subject.", style = MaterialTheme.typography.bodySmall, color = Color(0xFF9AA5BA))
-                                }
-
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Box(Modifier.fillMaxWidth()) {
                                     Card(
                                         modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) { showHomeBatchMenu = true },
                                         colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)),
-                                        shape = RoundedCornerShape(20.dp),
+                                        shape = RoundedCornerShape(16.dp),
                                         border = BorderStroke(1.dp, Color(0xFF30394B))
                                     ) {
-                                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                                Text("CURRENT BATCH", color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.2.sp, fontWeight = FontWeight.SemiBold)
-                                                Spacer(Modifier.weight(1f))
-                                                Row(
-                                                    Modifier.background(Color(0xFF173B39), RoundedCornerShape(20.dp)).padding(horizontal = 9.dp, vertical = 5.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        Row(
+                                            Modifier.fillMaxWidth().padding(11.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(11.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (currentBatchInfo.thumbnail.isNotBlank()) {
+                                                AsyncImage(
+                                                    model = currentBatchInfo.thumbnail,
+                                                    contentDescription = currentBatchInfo.name,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.width(88.dp).aspectRatio(1.7f).clip(RoundedCornerShape(10.dp))
+                                                )
+                                            } else {
+                                                Box(
+                                                    Modifier.size(width = 88.dp, height = 49.dp).background(Color(0xFF292641), RoundedCornerShape(10.dp)),
+                                                    contentAlignment = Alignment.Center
                                                 ) {
-                                                    Box(Modifier.size(6.dp).background(Color(0xFF71D6C5), RoundedCornerShape(50)))
-                                                    Text("ACTIVE", color = Color(0xFF8DE2D3), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                                    Icon(Icons.Default.MenuBook, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(23.dp))
                                                 }
                                             }
-                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                if (currentBatchInfo.thumbnail.isNotBlank()) {
-                                                    AsyncImage(
-                                                        model = currentBatchInfo.thumbnail,
-                                                        contentDescription = currentBatchInfo.name,
-                                                        contentScale = ContentScale.Crop,
-                                                        modifier = Modifier.width(112.dp).aspectRatio(1.8f).clip(RoundedCornerShape(12.dp))
-                                                    )
-                                                } else {
-                                                    Box(
-                                                        Modifier.size(width = 112.dp, height = 62.dp).background(Color(0xFF292641), RoundedCornerShape(12.dp)),
-                                                        contentAlignment = Alignment.Center
-                                                    ) {
-                                                        Icon(Icons.Default.MenuBook, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(27.dp))
-                                                    }
-                                                }
-                                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                                    Text(currentBatchInfo.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                                    val batchDetails = listOf(currentBatchInfo.language, currentBatchInfo.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
-                                                    if (batchDetails.isNotBlank()) Text(batchDetails, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                    Text("Tap to switch batch", color = Color(0xFFB5A9FF), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
-                                                }
-                                                Icon(Icons.Default.ArrowForward, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(20.dp))
+                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                Text(currentBatchInfo.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                                val batchDetails = listOf(currentBatchInfo.language, currentBatchInfo.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
+                                                if (batchDetails.isNotBlank()) Text(batchDetails, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
+                                            Text("⌄", color = Color(0xFFB5A9FF), style = MaterialTheme.typography.titleLarge)
                                         }
                                     }
                                     DropdownMenu(
                                         expanded = showHomeBatchMenu,
                                         onDismissRequest = { showHomeBatchMenu = false },
-                                        modifier = Modifier.widthIn(min = 220.dp, max = 300.dp).heightIn(max = 380.dp).background(Color(0xFF171D2A))
+                                        modifier = Modifier.widthIn(min = 220.dp, max = 300.dp).heightIn(max = 360.dp).background(Color(0xFF171D2A))
                                     ) {
-                                        Text("SWITCH BATCH", modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 6.dp), color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
                                         savedBatchIds.sortedBy { savedBatchInfo[it]?.name ?: it }.forEach { id ->
                                             val info = savedBatchInfo[id] ?: BatchInfo(id, "Saved batch")
                                             DropdownMenuItem(
-                                                modifier = Modifier.heightIn(min = 58.dp),
-                                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                                modifier = Modifier.heightIn(min = 48.dp),
                                                 text = {
-                                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                                        Text(info.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, fontWeight = if (id == batch) FontWeight.Bold else FontWeight.Normal)
-                                                        Text(if (info.language.isNotBlank()) "${info.language} · ${id}" else id, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                                        Text(info.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, fontWeight = if (id == batch) FontWeight.SemiBold else FontWeight.Normal)
+                                                        if (info.language.isNotBlank()) Text(info.language, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 1)
                                                     }
                                                 },
-                                                trailingIcon = {
-                                                    if (id == batch) Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF71D6C5))
-                                                },
+                                                trailingIcon = { if (id == batch) Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF71D6C5)) },
                                                 onClick = {
                                                     showHomeBatchMenu = false
                                                     if (id != batch) openBatch(info)
@@ -1192,8 +1186,7 @@ private fun MineStudyApp() {
                                         }
                                         HorizontalDivider(color = Color(0xFF30394B))
                                         DropdownMenuItem(
-                                            text = { Text("Manage saved batches", fontWeight = FontWeight.SemiBold) },
-                                            leadingIcon = { Icon(Icons.Default.FolderOpen, null, tint = Color(0xFFB5A9FF)) },
+                                            text = { Text("Manage batches") },
                                             onClick = { showHomeBatchMenu = false; screen = "my_batches" }
                                         )
                                     }
@@ -1203,31 +1196,34 @@ private fun MineStudyApp() {
                                     Card(
                                         Modifier.fillMaxWidth().clickable { resumeLastChapter() },
                                         colors = CardDefaults.cardColors(containerColor = Color(0xFF20243A)),
-                                        shape = RoundedCornerShape(18.dp),
-                                        border = BorderStroke(1.dp, Color(0xFF393653))
+                                        shape = RoundedCornerShape(14.dp)
                                     ) {
-                                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                            Box(Modifier.size(42.dp).background(Color(0xFF393653), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-                                                Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(25.dp))
+                                        Row(
+                                            Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(25.dp))
+                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                Text("Continue learning", color = Color(0xFFB5A9FF), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                                                Text(lastChapterTitle, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(lastSubjectTitle, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
-                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                Text("CONTINUE LEARNING", color = Color(0xFFB5A9FF), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, fontWeight = FontWeight.Bold)
-                                                Text(lastChapterTitle, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                Text(lastSubjectTitle, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            }
-                                            Icon(Icons.Default.ArrowForward, null, tint = Color(0xFFB5A9FF))
+                                            Icon(Icons.Default.ArrowForward, null, tint = Color(0xFF9AA5BA), modifier = Modifier.size(20.dp))
                                         }
                                     }
                                 }
 
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text("Your subjects", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                        Text(if (busy) "Updating your study library…" else if (subjects.isEmpty()) "Your subjects will appear here" else "${subjects.size} subjects in this batch", color = Color(0xFF9AA5BA), style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
-                                    else IconButton(onClick = { loadSubjects() }) {
-                                        Icon(Icons.Default.Refresh, contentDescription = "Refresh subjects", tint = Color(0xFF9AA5BA))
+                                Row(Modifier.fillMaxWidth().padding(top = 3.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Subjects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                    Text(
+                                        if (busy) "Loading…" else if (subjects.isEmpty()) "" else subjects.size.toString(),
+                                        color = Color(0xFF9AA5BA),
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                    if (busy) {
+                                        Spacer(Modifier.width(9.dp))
+                                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
                                     }
                                 }
                             }
@@ -1259,11 +1255,21 @@ private fun MineStudyApp() {
                             label = { Text("Search UPSC batches") },
                             placeholder = { Text("e.g. Prarambh 2027") },
                             trailingIcon = {
-                                IconButton(onClick = {
-                                    scope.launch { batchListState.scrollToItem(0) }
-                                    searchBatches(1)
-                                }) {
-                                    Icon(Icons.Default.Search, contentDescription = "Search batches")
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (batchSearchText.isNotBlank() || batchSearchLoading) {
+                                        IconButton(onClick = { cancelBatchSearch() }) {
+                                            Icon(Icons.Default.Close, contentDescription = "Cancel search and clear")
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch { batchListState.scrollToItem(0) }
+                                            searchBatches(1)
+                                        },
+                                        enabled = !batchSearchLoading
+                                    ) {
+                                        Icon(Icons.Default.Search, contentDescription = "Search batches")
+                                    }
                                 }
                             }
                         )
@@ -1279,7 +1285,7 @@ private fun MineStudyApp() {
                                 ) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(1.8f))
+                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(1.7f))
                                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                                 Text(info.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                 val details = listOf(info.language, info.className.takeIf { it.isNotBlank() }?.let { "Class $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
@@ -1354,7 +1360,7 @@ private fun MineStudyApp() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(18.dp)) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(1.8f))
+                                            BatchThumbnail(info.thumbnail, Modifier.width(112.dp).aspectRatio(1.7f))
                                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                                 Text(info.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                 if (info.language.isNotBlank() || info.className.isNotBlank()) {
@@ -1516,10 +1522,10 @@ private fun MineStudyApp() {
                     )
                     "download_center" -> DownloadCenterScreen(
                         queueItems = downloadState.queueItems,
-                        maxParallel = downloadState.maxParallel,
                         runningCount = downloadState.runningCount,
                         queuedCount = downloadState.queuedCount,
-                        onSetParallel = { DownloadService.setParallelLimit(context, it) },
+                        maxParallel = downloadState.maxParallel,
+                        onSetMaxParallel = { DownloadService.setParallelLimit(context, it) },
                         onPause = { DownloadService.pauseItem(context, it) },
                         onResume = { DownloadService.resumeItem(context, it) },
                         onCancelItem = { DownloadService.cancelItem(context, it) },
@@ -1527,8 +1533,7 @@ private fun MineStudyApp() {
                         onMove = { id, direction -> DownloadService.moveQueued(context, id, direction) },
                         onRemove = { DownloadService.removeQueued(context, it) },
                         onCancelAll = { DownloadService.cancel(context) },
-                        onClearQueue = { DownloadService.clearQueue(context) },
-                        onOpenGallery = { downloadRecords = DownloadRepository.list(context); screen = "downloads" }
+                        onClearQueue = { DownloadService.clearQueue(context) }
                     )
                     "downloads" -> DownloadGallery(
                         records = downloadRecords,
@@ -1578,25 +1583,20 @@ private fun MineStudyApp() {
 
     if (showSettings) {
         AlertDialog(
-            onDismissRequest = { showSettings = false },
-            shape = RoundedCornerShape(22.dp),
+            onDismissRequest = { if (api.apiKey.isNotBlank()) showSettings = false },
+            shape = RoundedCornerShape(18.dp),
             containerColor = Color(0xFF141A26),
             tonalElevation = 0.dp,
-            title = {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Settings", fontWeight = FontWeight.Bold)
-                    Text("Library connection", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
-                }
-            },
+            title = { Text("Connect API", fontWeight = FontWeight.SemiBold) },
             text = {
-                Column(
-                    Modifier.fillMaxWidth().heightIn(max = 350.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text("API KEY", color = Color.Gray, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
+                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     OutlinedTextField(
                         value = apiKey,
-                        onValueChange = { value -> apiKey = value; keyStatus = ""; api.batchId = batch },
+                        onValueChange = { value ->
+                            apiKey = value
+                            keyStatus = ""
+                            api.batchId = batch
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
@@ -1607,67 +1607,72 @@ private fun MineStudyApp() {
                             focusedBorderColor = Color(0xFF9B8CFF),
                             unfocusedBorderColor = Color(0xFF343D50),
                             focusedContainerColor = Color(0xFF101521),
-                            unfocusedContainerColor = Color(0xFF101521),
-                            focusedPlaceholderColor = Color(0xFF8791A5),
-                            unfocusedPlaceholderColor = Color(0xFF8791A5)
+                            unfocusedContainerColor = Color(0xFF101521)
                         ),
-                        placeholder = { Text("Paste your API key", style = MaterialTheme.typography.bodySmall) }
+                        placeholder = { Text("Paste API key", style = MaterialTheme.typography.bodySmall) }
                     )
-                    Text("Key expires after 24 hours", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    keyStatus = "Generating key link..."
-                                    try {
-                                        keyLink = api.generateKeyLink()
-                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        clipboard.setPrimaryClip(ClipData.newPlainText("Mine Study key link", keyLink))
-                                        keyStatus = "Key link copied. Open the page and obtain your API key."
-                                        openExternal(context, keyLink)
-                                    } catch (e: Exception) { keyStatus = e.message ?: "Could not generate key link" }
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                keyStatus = "Generating key link..."
+                                try {
+                                    keyLink = api.generateKeyLink()
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Mine Study key link", keyLink))
+                                    keyStatus = "Link copied. Get your key and paste it above."
+                                    openExternal(context, keyLink)
+                                } catch (e: Exception) {
+                                    keyStatus = "Could not generate key. Check your connection."
                                 }
-                            },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 7.dp)
-                        ) { Icon(Icons.Default.Key, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("Generate", maxLines = 1) }
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    try {
-                                        val count = api.verifyKey(apiKey) { keyStatus = it }
-                                        api.apiKey = apiKey.trim()
-                                        keyStatus = "Verified · $count subjects found"
-                                        showSettings = false
-                                        loadSubjects()
-                                    } catch (e: Exception) { keyStatus = e.message ?: "API key verification failed" }
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 7.dp)
-                        ) { Text("Verify key", maxLines = 1) }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 7.dp)
+                    ) {
+                        Icon(Icons.Default.Key, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Generate")
                     }
                     if (keyStatus.isNotBlank()) {
                         Text(
                             keyStatus,
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (keyStatus.contains("Verified")) Color(0xFF71D6C5) else Color.Gray
+                            color = if (keyStatus == "Verified") Color(0xFF71D6C5) else Color(0xFF9AA5BA)
                         )
                     }
-                    TextButton(
-                        onClick = {
-                            api.apiKey = ""
-                            apiKey = ""
-                            keyStatus = "Saved API key cleared."
-                        },
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
-                    ) { Text("Clear saved key", color = Color(0xFFFF8A8A), style = MaterialTheme.typography.labelSmall) }
-                    if (keyLink.isNotBlank()) Text(keyLink, style = MaterialTheme.typography.labelSmall, color = Color(0xFFB5A9FF), maxLines = 2)
                 }
             },
             confirmButton = {},
-            dismissButton = { TextButton(onClick = { showSettings = false }) { Text("Close") } }
+            dismissButton = {}
         )
+    }
+}
+
+@Composable
+private fun StudyItemSkeleton(showThumbnail: Boolean) {
+    val shimmer = Color(0xFF293246)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(15.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(11.dp)
+        ) {
+            if (showThumbnail) {
+                Box(Modifier.width(112.dp).aspectRatio(1.7f).clip(RoundedCornerShape(10.dp)).background(shimmer))
+            } else {
+                Box(Modifier.size(42.dp).clip(RoundedCornerShape(11.dp)).background(shimmer))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.fillMaxWidth(0.88f).height(13.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
+                Box(Modifier.fillMaxWidth(0.58f).height(10.dp).clip(RoundedCornerShape(8.dp)).background(shimmer.copy(alpha = 0.72f)))
+                if (showThumbnail) Box(Modifier.fillMaxWidth(0.34f).height(9.dp).clip(RoundedCornerShape(8.dp)).background(shimmer.copy(alpha = 0.55f)))
+            }
+            if (showThumbnail) Box(Modifier.size(30.dp).clip(RoundedCornerShape(10.dp)).background(shimmer.copy(alpha = 0.7f)))
+        }
     }
 }
 
@@ -1690,109 +1695,182 @@ private fun ItemList(
     starredSubjectIds: Set<String> = emptySet(),
     onToggleStar: (StudyItem) -> Unit = {},
     onSelect: (StudyItem) -> Unit, onRetry: () -> Unit
- ) {
+) {
     var searchQuery by remember(heading) { mutableStateOf("") }
     val searchable = heading == "Chapters" || showThumbnails
     val visibleItems = remember(items, searchQuery, starredSubjectIds, showSubjectStars) {
-        val filtered = if (searchQuery.isBlank()) items else items.filter { it.title.contains(searchQuery.trim(), ignoreCase = true) }
+        val filtered = if (searchQuery.isBlank()) items else items.filter {
+            it.title.contains(searchQuery.trim(), ignoreCase = true)
+        }
         if (showSubjectStars) filtered.sortedByDescending { it.id in starredSubjectIds } else filtered
     }
-    Text(heading, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-    if (searchable) {
-        Spacer(Modifier.height(6.dp))
-        OutlinedTextField(
-            value = searchQuery, onValueChange = { searchQuery = it },
-            modifier = Modifier.fillMaxWidth(), singleLine = true,
-            placeholder = { Text(if (showThumbnails) "Search lectures…" else "Search chapters…") },
-            textStyle = MaterialTheme.typography.bodyMedium,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                focusedContainerColor = Color(0xFF101521), unfocusedContainerColor = Color(0xFF101521),
-                focusedBorderColor = Color(0xFF9B8CFF), unfocusedBorderColor = Color(0xFF343D50)
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(heading, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        if (searchable) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(13.dp),
+                placeholder = { Text(if (showThumbnails) "Search lectures…" else "Search chapters…") },
+                textStyle = MaterialTheme.typography.bodyMedium,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                    focusedContainerColor = Color(0xFF101521), unfocusedContainerColor = Color(0xFF101521),
+                    focusedBorderColor = Color(0xFF9B8CFF), unfocusedBorderColor = Color(0xFF343D50)
+                )
             )
-        )
-    }
-    Spacer(Modifier.height(8.dp))
-    if (!busy && visibleItems.isEmpty() && error.isBlank()) {
-        Text("Nothing here yet. Check your API key or try refreshing.", color = Color.Gray)
-        TextButton(onClick = onRetry) { Icon(Icons.Default.Refresh, null); Text("Refresh") }
-    }
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-        items(visibleItems, key = { it.id }) { item ->
-            Card(
-                modifier = Modifier.fillMaxWidth().clickable { onSelect(item) },
-                shape = RoundedCornerShape(17.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A))
+        }
+        if (busy && visibleItems.isEmpty()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 20.dp)
             ) {
-                Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        val thumbnail = item.raw.optString("image").takeIf { showThumbnails && it.startsWith("http", true) }
-                        if (thumbnail != null) {
-                            AsyncImage(
-                                model = thumbnail,
-                                contentDescription = item.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(width = 136.dp, height = 88.dp).clip(RoundedCornerShape(13.dp))
-                            )
-                        } else {
-                            Box(
-                                Modifier.size(width = if (showThumbnails) 136.dp else 48.dp, height = if (showThumbnails) 88.dp else 48.dp)
-                                    .background(Color(0xFF292641), RoundedCornerShape(13.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(28.dp))
-                            }
-                        }
-                        Spacer(Modifier.width(13.dp))
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text(item.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge, maxLines = 3)
-                            if (item.subtitle.isNotBlank()) Text(item.subtitle, color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 2)
-                        }
-                        if (showSubjectStars) {
-                            val isStarred = item.id in starredSubjectIds
-                            IconButton(onClick = { onToggleStar(item) }, modifier = Modifier.size(38.dp)) {
-                                Icon(
-                                    imageVector = if (isStarred) Icons.Default.Star else Icons.Default.StarBorder,
-                                    contentDescription = if (isStarred) "Remove from important subjects" else "Mark subject important",
-                                    tint = if (isStarred) Color(0xFFFFC857) else Color(0xFF858B98),
-                                    modifier = Modifier.size(23.dp)
-                                )
-                            }
-                        }
+                items(4) { StudyItemSkeleton(showThumbnails) }
+            }
+        } else if (!busy && visibleItems.isEmpty() && error.isBlank()) {
+            Column(
+                Modifier.fillMaxWidth().padding(vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(Icons.Default.MenuBook, null, tint = Color(0xFF858B98), modifier = Modifier.size(27.dp))
+                Text(
+                    if (searchQuery.isNotBlank()) "No matches for “$searchQuery”" else "Nothing here yet",
+                    color = Color(0xFFB8C1D1),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    if (searchQuery.isNotBlank()) "Try another search." else "Check your connection and try again.",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                TextButton(onClick = { if (searchQuery.isNotBlank()) searchQuery = "" else onRetry() }) {
+                    Text(if (searchQuery.isNotBlank()) "Clear search" else "Retry")
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 20.dp)
+            ) {
+                items(visibleItems, key = { it.id }) { item ->
+                    val thumbnail = item.raw.optString("image").takeIf { showThumbnails && it.startsWith("http", true) }
+                    val cleanTitle = item.title.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim()
+                    val itemKey = downloadItemKey(item)
+                    val downloaded = downloadRecords.any { record ->
+                        record.category == downloadCategory && (record.itemKey == itemKey ||
+                            (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)))
                     }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        OutlinedButton(onClick = { onSelect(item) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)) {
-                            Text(actionLabel, maxLines = 1)
-                        }
-                        if (onDownload != null) {
-                            val cleanTitle = item.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
-                            val itemKey = downloadItemKey(item)
-                            val downloaded = downloadRecords.any { record ->
-                                record.category == downloadCategory && (record.itemKey == itemKey ||
-                                    (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)))
-                            }
-                            val queueEntry = downloadQueueItems.firstOrNull { it.itemKey == itemKey && it.category == downloadCategory }
-                            val downloading = itemKey in downloadingKeys || (activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory)
-                            val itemPercent = queueEntry?.takeIf { it.total > 0L }?.let {
-                                ((it.bytes * 100L) / it.total).toInt().coerceIn(0, 99)
-                            } ?: if (activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory) activeDownloadPercent else 0
-                            IconButton(
-                                onClick = { if (!downloaded && !downloading) onDownload(item) },
-                                enabled = !downloaded && !downloading,
-                                modifier = Modifier.size(44.dp)
-                            ) {
-                                when {
-                                    downloading -> Box(contentAlignment = Alignment.Center, modifier = Modifier.size(34.dp)) {
-                                        CircularProgressIndicator(modifier = Modifier.size(25.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
-                                        Text("${if (queueEntry?.active == false) "Q" else "$itemPercent%"}", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+                    val queueEntry = downloadQueueItems.firstOrNull { it.itemKey == itemKey && it.category == downloadCategory }
+                    val downloading = itemKey in downloadingKeys || (activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory)
+                    val itemPercent = queueEntry?.takeIf { it.total > 0L }?.let {
+                        ((it.bytes * 100L) / it.total).toInt().coerceIn(0, 99)
+                    } ?: if (activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory) activeDownloadPercent else 0
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth().animateContentSize().clickable { onSelect(item) },
+                        shape = RoundedCornerShape(15.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A))
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (showThumbnails) {
+                                Box(
+                                    Modifier.width(112.dp).aspectRatio(1.7f).clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFF292641)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (thumbnail != null) {
+                                        AsyncImage(
+                                            model = thumbnail,
+                                            contentDescription = item.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(27.dp))
                                     }
-                                    downloaded -> Icon(Icons.Default.CheckCircle, contentDescription = "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(25.dp))
-                                    else -> Icon(Icons.Default.Download, contentDescription = "Download", tint = Color(0xFF858B98), modifier = Modifier.size(25.dp))
                                 }
+                            } else {
+                                Box(
+                                    Modifier.size(42.dp).clip(RoundedCornerShape(11.dp)).background(Color(0xFF292641)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        if (showSubjectStars) Icons.Default.MenuBook else Icons.Default.ArrowForward,
+                                        null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(21.dp)
+                                    )
+                                }
+                            }
+                            Column(
+                                Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    item.title,
+                                    fontWeight = FontWeight.SemiBold,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White,
+                                    maxLines = if (showThumbnails) 2 else 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (item.subtitle.isNotBlank()) {
+                                    Text(item.subtitle, color = Color(0xFF9AA5BA), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (showThumbnails) {
+                                    Text(
+                                        if (downloaded) "Downloaded" else if (downloading) {
+                                            if (queueEntry?.active == false) "In queue" else "Downloading · $itemPercent%"
+                                        } else actionLabel,
+                                        color = when {
+                                            downloaded -> Color(0xFF71D6C5)
+                                            downloading -> Color(0xFFB5A9FF)
+                                            else -> Color(0xFF9AA5BA)
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            if (showSubjectStars) {
+                                val isStarred = item.id in starredSubjectIds
+                                IconButton(onClick = { onToggleStar(item) }, modifier = Modifier.size(36.dp)) {
+                                    Icon(
+                                        imageVector = if (isStarred) Icons.Default.Star else Icons.Default.StarBorder,
+                                        contentDescription = if (isStarred) "Remove from important subjects" else "Mark subject important",
+                                        tint = if (isStarred) Color(0xFFFFC857) else Color(0xFF858B98),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            } else if (onDownload != null) {
+                                IconButton(
+                                    onClick = { if (!downloaded && !downloading) onDownload(item) },
+                                    enabled = !downloaded && !downloading,
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    when {
+                                        downloading -> Box(contentAlignment = Alignment.Center, modifier = Modifier.size(29.dp)) {
+                                            CircularProgressIndicator(Modifier.size(25.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
+                                            Text(if (queueEntry?.active == false) "Q" else "$itemPercent%", fontSize = 7.sp, color = Color.White)
+                                        }
+                                        downloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(22.dp))
+                                        else -> Icon(Icons.Default.Download, "Download", tint = Color(0xFF858B98), modifier = Modifier.size(22.dp))
+                                    }
+                                }
+                            } else {
+                                Icon(Icons.Default.ArrowForward, null, tint = Color(0xFF69758A), modifier = Modifier.size(17.dp))
                             }
                         }
                     }
                 }
+                if (busy) item { StudyItemSkeleton(showThumbnails) }
             }
         }
     }
@@ -1908,7 +1986,12 @@ private fun VideoScreen(
         } else {
             ChunkQueryDataSourceFactory()
         }
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(12_000, 50_000, 1_000, 2_500)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
         ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
             .setMediaSourceFactory(DefaultMediaSourceFactory(sourceFactory))
             .setSeekBackIncrementMs(10_000L)
             .setSeekForwardIncrementMs(10_000L)
