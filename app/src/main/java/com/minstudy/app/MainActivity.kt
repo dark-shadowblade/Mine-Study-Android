@@ -20,7 +20,15 @@ import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -49,6 +57,7 @@ import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
@@ -124,9 +133,10 @@ data class BatchInfo(val id: String, val name: String, val language: String = ""
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MineStudyApp() }
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4107)
+        setContent {
+            var latestUpdateVersion by remember { mutableLongStateOf(0L) }
+            MineStudyApp(latestUpdateVersion = latestUpdateVersion)
+            AutoUpdateChecker(onUpdateAvailable = { latestUpdateVersion = it })
         }
     }
 }
@@ -162,7 +172,7 @@ private class StudyApi(private val context: Context) {
         }
 
     var batchId: String
-        get() = prefs.getString("batch_id", BATCH_ONE) ?: BATCH_ONE
+        get() = prefs.getString("batch_id", "") ?: ""
         set(value) { prefs.edit().putString("batch_id", value).apply() }
 
     // Mirrors Mine-Study/index.html request(): validate the envelope, then
@@ -220,12 +230,69 @@ private class StudyApi(private val context: Context) {
             append("/batch/search/v2?cohortId=635b83410a47c70011ca5ffb&exam=UPSC&page=$page")
             if (keyword.isNotBlank()) append("&keyword=${enc(keyword)}")
         }
-        val payload = get(query, unwrapData = true) as? JSONObject
-            ?: throw IllegalStateException("Unexpected batch search response")
-        val array = payload.optJSONArray("batches") ?: JSONArray()
+        val response = get(query, unwrapData = false)
+        val batchIdKeys = setOf("_id", "id", "batchId", "batch_id", "batchID", "batch_id")
+        var emptyBatchArray: JSONArray? = null
+        fun hasBatchIdentity(item: JSONObject): Boolean {
+            val keys = item.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (batchIdKeys.any { it.equals(key, ignoreCase = true) } &&
+                    item.optString(key).isNotBlank() && item.optString(key) != "null") return true
+            }
+            return false
+        }
+        fun findBatchArray(value: Any?, depth: Int = 0): JSONArray? {
+            if (depth > 8) return null
+            if (value is JSONObject) {
+                val preferred = listOf("batches", "batchList", "batch_list", "results", "items", "docs")
+                for (key in preferred) {
+                    val nested = value.opt(key)
+                    if (nested is JSONArray && (0 until nested.length()).any { nested.optJSONObject(it)?.let(::hasBatchIdentity) == true }) return nested
+                    findBatchArray(nested, depth + 1)?.let { return it }
+                }
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    val nested = value.opt(keys.next())
+                    findBatchArray(nested, depth + 1)?.let { return it }
+                }
+            } else if (value is JSONArray) {
+                if (value.length() == 0) {
+                    if (emptyBatchArray == null) emptyBatchArray = value
+                } else if ((0 until value.length()).any { value.optJSONObject(it)?.let(::hasBatchIdentity) == true }) {
+                    return value
+                } else {
+                    for (index in 0 until value.length()) findBatchArray(value.opt(index), depth + 1)?.let { return it }
+                }
+            }
+            return null
+        }
+        fun findTotalPages(value: Any?, depth: Int = 0): Int? {
+            if (depth > 8 || value !is JSONObject) return null
+            val pageKeys = setOf("totalPages", "total_pages", "totalPage", "total_page", "pages")
+            val keys = value.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val nested = value.opt(key)
+                if (pageKeys.any { it.equals(key, ignoreCase = true) }) {
+                    val total = when (nested) {
+                        is Number -> nested.toInt()
+                        is String -> nested.toIntOrNull() ?: 0
+                        else -> 0
+                    }
+                    if (total > 0) return total
+                }
+                findTotalPages(nested, depth + 1)?.let { return it }
+            }
+            return null
+        }
+        val array = findBatchArray(response) ?: emptyBatchArray
+            ?: throw IllegalStateException("Batch server returned an unrecognized response")
         val batches = (0 until array.length()).mapNotNull { index ->
             val item = array.optJSONObject(index) ?: return@mapNotNull null
-            val id = item.optString("_id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val id = listOf("_id", "id", "batchId", "batch_id").firstNotNullOfOrNull { key ->
+                item.optString(key).takeIf { it.isNotBlank() && it != "null" }
+            } ?: return@mapNotNull null
             // Batch search v2 exposes the official card artwork as previewImage.
             val previewImage = item.optString("previewImage").trim()
                 .takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) }
@@ -262,7 +329,8 @@ private class StudyApi(private val context: Context) {
             val thumbnail = previewImage ?: findImage(item).orEmpty()
             BatchInfo(id, item.optString("name", "Unnamed batch"), item.optString("lang", ""), item.optString("class", ""), thumbnail)
         }
-        return batches to (payload.optJSONObject("pagination")?.optInt("totalPages", 1)?.coerceAtLeast(1) ?: 1)
+        // If the server omits pagination metadata, allow callers to scan pages until an empty page.
+        return batches to (findTotalPages(response)?.coerceAtLeast(1) ?: 50)
     }
 
     suspend fun generateKeyLink(): String {
@@ -288,7 +356,9 @@ private class StudyApi(private val context: Context) {
 
     suspend fun verifyKey(candidate: String, onStatus: (String) -> Unit = {}): Int {
         if (candidate.isBlank()) throw IllegalStateException("Enter an API key first")
-        val subjectPath = "/batch/$batchId/subject"
+        // Keep the legacy target only for API-key validation; it is never
+        // selected, saved, or shown as a user's batch.
+        val subjectPath = "/batch/${batchId.ifBlank { BATCH_ONE }}/subject"
 
         // Check first: a key may already be activated even after app data is cleared.
         onStatus("Checking whether API key is already activated...")
@@ -380,7 +450,7 @@ private class StudyApi(private val context: Context) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MineStudyApp() {
+private fun MineStudyApp(latestUpdateVersion: Long) {
     val context = LocalContext.current
     val api = remember { StudyApi(context) }
     val scope = rememberCoroutineScope()
@@ -391,10 +461,15 @@ private fun MineStudyApp() {
     var lastChapterTitle by remember { mutableStateOf(progressPrefs.getString("chapter_title", "").orEmpty()) }
     var lastProgressBatch by remember { mutableStateOf(progressPrefs.getString("batch_id", "").orEmpty()) }
     var apiKey by remember { mutableStateOf(api.apiKey) }
-    var batch by remember { mutableStateOf(api.batchId) }
+    var batch by remember {
+        mutableStateOf(api.batchId.ifBlank {
+            context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
+                .getStringSet("saved_batch_ids", emptySet())?.sorted()?.firstOrNull().orEmpty()
+        })
+    }
     var savedBatchIds by remember {
-        mutableStateOf((context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
-            .getStringSet("saved_batch_ids", emptySet())?.toSet() ?: emptySet()) + api.batchId)
+        mutableStateOf(context.getSharedPreferences("mine_study", Context.MODE_PRIVATE)
+            .getStringSet("saved_batch_ids", emptySet())?.toSet() ?: emptySet())
     }
     var batchSearchText by remember { mutableStateOf("") }
     var manualBatchId by remember { mutableStateOf("") }
@@ -424,8 +499,7 @@ private fun MineStudyApp() {
     var screen by remember { mutableStateOf("home") }
     var type by remember { mutableStateOf("videos") }
     var subjects by remember { mutableStateOf(emptyList<StudyItem>()) }
-    var starredSubjectIds by remember(batch) {
-        mutableStateOf(progressPrefs.getStringSet("starred_subjects_$batch", emptySet())?.toSet() ?: emptySet())
+    var starredSubjectIds by remember(batch) {        mutableStateOf(progressPrefs.getStringSet("starred_subjects_$batch", emptySet())?.toSet() ?: emptySet())
     }
     fun toggleSubjectStar(subject: StudyItem) {
         val updated = if (subject.id in starredSubjectIds) starredSubjectIds - subject.id else starredSubjectIds + subject.id
@@ -516,18 +590,27 @@ private fun MineStudyApp() {
 
     // A newly pasted key is checked automatically. Existing saved keys do not
     // close Settings just because the user opened the dialog.
-    LaunchedEffect(apiKey, batch, showSettings) {
-        if (showSettings && apiKey.isNotBlank() && apiKey.trim() != api.apiKey.trim()) {
+    LaunchedEffect(apiKey, batch, showSettings, screen) {
+        val settingsPage = screen == "settings"
+        if ((showSettings || settingsPage) && apiKey.isNotBlank() && apiKey.trim() != api.apiKey.trim()) {
             keyStatus = "Verifying..."
             delay(500)
             api.batchId = batch
             try {
-                val count = api.verifyKey(apiKey) { status -> keyStatus = status }
+                api.verifyKey(apiKey) { status -> keyStatus = status }
                 api.apiKey = apiKey.trim()
                 keyStatus = "Verified"
                 error = ""
-                showSettings = false
-                loadSubjects()
+                if (!settingsPage) {
+                    showSettings = false
+                    if (batch.isNotBlank()) {
+                        loadSubjects()
+                    } else {
+                        // Fresh installs start with no selected batch.
+                        screen = "home"
+                        error = ""
+                    }
+                }
             } catch (e: Exception) {
                 keyStatus = "Key verification failed. Tap Generate and paste a new key."
             }
@@ -796,6 +879,11 @@ private fun MineStudyApp() {
     }
 
     fun saveBatchInfo(info: BatchInfo) {
+        // The first batch added becomes the default batch automatically.
+        if (batch.isBlank()) {
+            batch = info.id
+            api.batchId = info.id
+        }
         val updated = savedBatchIds + info.id
         savedBatchIds = updated
         val updatedInfo = savedBatchInfo + (info.id to info)
@@ -825,20 +913,6 @@ private fun MineStudyApp() {
         Toast.makeText(context, if (batch == id) "Removed from My batches. It remains your active batch." else "Batch removed from My batches", Toast.LENGTH_SHORT).show()
     }
 
-    fun addManualBatch() {
-        val id = manualBatchId.trim()
-        if (id.isBlank()) return
-        if (!id.matches(Regex("[A-Za-z0-9_-]{8,64}"))) {
-            batchSearchError = "Enter a valid batch ID (8–64 letters or numbers)."
-            return
-        }
-        val existing = savedBatchInfo[id] ?: BatchInfo(id, "Manual batch")
-        saveBatchInfo(existing)
-        manualBatchId = ""
-        batchSearchError = ""
-        Toast.makeText(context, "Batch added to My batches", Toast.LENGTH_SHORT).show()
-    }
-
     fun openBatch(info: BatchInfo) {
         scope.launch {
             busy = true
@@ -861,6 +935,22 @@ private fun MineStudyApp() {
                 error = e.message ?: "Could not open this batch"
             } finally { busy = false }
         }
+    }
+
+    fun addManualBatch() {
+        val id = manualBatchId.trim()
+        if (id.isBlank()) return
+        if (!id.matches(Regex("[A-Za-z0-9_-]{8,64}"))) {
+            batchSearchError = "Enter a valid batch ID (8–64 letters or numbers)."
+            return
+        }
+        val existing = savedBatchInfo[id] ?: BatchInfo(id, "Manual batch")
+        val isFirstBatch = batch.isBlank()
+        saveBatchInfo(existing)
+        if (isFirstBatch) openBatch(existing)
+        manualBatchId = ""
+        batchSearchError = ""
+        Toast.makeText(context, "Batch added to My batches", Toast.LENGTH_SHORT).show()
     }
 
     fun batchEditDistance(a: String, b: String): Int {
@@ -958,9 +1048,10 @@ private fun MineStudyApp() {
 
                 // The API ignores keyword, so match locally. Two requests at
                 // a time reduce rate limiting; each load remains bounded.
-                val pageBudget = if (query.isBlank()) 8 else 50
-                while (nextPage <= totalPages && scanned < pageBudget &&
-                    (query.isBlank() || newMatches < 20)) {
+                // Search every available page: common terms can match many
+                // early batches, so stopping after 20 matches hides later results.
+                val pageBudget = if (query.isBlank()) 8 else totalPages
+                while (nextPage <= totalPages && scanned < pageBudget) {
                     val groupEnd = minOf(nextPage + 1, totalPages, page + pageBudget - 1)
                     val pages = coroutineScope {
                         (nextPage..groupEnd).map { requestedPage ->
@@ -968,9 +1059,23 @@ private fun MineStudyApp() {
                         }.map { it.await() }.sortedBy { it.first }
                     }
                     if (generation != batchSearchGeneration) throw CancellationException()
+                    var stopPaging = false
                     for ((requestedPage, response) in pages) {
                         val (pageResults, reportedPages) = response
                         totalPages = reportedPages.coerceAtLeast(1)
+                        if (pageResults.isEmpty()) {
+                            stopPaging = true
+                            lastScannedPage = requestedPage
+                            scanned++
+                            break
+                        }
+                        val knownIds = accumulated.mapTo(HashSet()) { it.id }
+                        if (pageResults.all { it.id in knownIds }) {
+                            stopPaging = true
+                            lastScannedPage = requestedPage
+                            scanned++
+                            break
+                        }
                         val matches = if (query.isBlank()) pageResults else pageResults.filter { batchMatches(it, query) }
                         val previousSize = accumulated.size
                         accumulated = (accumulated + matches).distinctBy { it.id }
@@ -983,6 +1088,7 @@ private fun MineStudyApp() {
                     batchSearchPage = lastScannedPage.coerceAtLeast(page)
                     batchSearchTotalPages = totalPages
                     batchSearchExecuted = true
+                    if (stopPaging) break
                     nextPage = groupEnd + 1
                 }
 
@@ -1022,6 +1128,7 @@ private fun MineStudyApp() {
             "player" -> "contents"
             "pdf" -> "downloads"
             "download_center" -> "home"
+            "notifications" -> "home"
             "contents" -> "chapters"
             "chapters" -> "home"
             else -> "home"
@@ -1053,8 +1160,7 @@ private fun MineStudyApp() {
                 if (screen != "player") {
                     TopAppBar(
                         title = { Column {
-                            Text("MINE STUDY", fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-                            Text("Your learning space", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Abhi's PW", fontWeight = FontWeight.Black, letterSpacing = 1.5.sp)
                         } },
                         navigationIcon = {
                             if (screen != "home") IconButton(onClick = { goBack() }) {
@@ -1062,8 +1168,39 @@ private fun MineStudyApp() {
                             }
                         },
                         actions = {
+                            IconButton(onClick = { screen = "notifications" }) {
+                                Box {
+                                    Icon(Icons.Default.Notifications, contentDescription = "Updates")
+                                    if (latestUpdateVersion > 0L) {
+                                        Box(
+                                            Modifier.align(Alignment.TopEnd)
+                                                .size(8.dp)
+                                                .background(Color(0xFFE53935), RoundedCornerShape(50))
+                                        )
+                                    }
+                                }
+                            }
+                            val downloadingNow = downloadState.queueItems.any { it.active && !it.paused }
+                            val downloadIconTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "downloader-icon")
+                            val downloadIconScale by downloadIconTransition.animateFloat(
+                                initialValue = 1f,
+                                targetValue = 1.18f,
+                                animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                                    animation = tween(650),
+                                    repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+                                ),
+                                label = "downloader-pulse"
+                            )
                             IconButton(onClick = { screen = "download_center" }) {
-                                Icon(Icons.Default.Download, contentDescription = "Download Center")
+                                Icon(
+                                    Icons.Default.Download,
+                                    contentDescription = "Downloader",
+                                    modifier = Modifier.graphicsLayer {
+                                        scaleX = if (downloadingNow) downloadIconScale else 1f
+                                        scaleY = if (downloadingNow) downloadIconScale else 1f
+                                    },
+                                    tint = if (downloadingNow) Color(0xFFB5A9FF) else LocalContentColor.current
+                                )
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0B0D14))
@@ -1071,39 +1208,67 @@ private fun MineStudyApp() {
                 }
             },
             bottomBar = {
-                if (screen in setOf("home", "all_batches", "my_batches", "downloads")) {
-                    NavigationBar(containerColor = Color(0xFF111622)) {
+                if (screen in setOf("home", "all_batches", "my_batches", "downloads", "settings")) {
+                    NavigationBar(
+                        containerColor = Color(0xFF111622),
+                        tonalElevation = 0.dp,
+                        windowInsets = NavigationBarDefaults.windowInsets
+                    ) {
                         NavigationBarItem(
+                            alwaysShowLabel = true,
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Color(0xFFD8D0FF),
+                                selectedTextColor = Color(0xFFE8E5F2),
+                                indicatorColor = Color(0xFF302B46),
+                                unselectedIconColor = Color(0xFF858DA0),
+                                unselectedTextColor = Color(0xFF9AA5BA)
+                            ),
                             selected = screen == "home",
                             onClick = { screen = "home"; if (subjects.isEmpty() && apiKey.isNotBlank()) loadSubjects() },
                             icon = { Icon(Icons.Default.MenuBook, contentDescription = null) },
-                            label = { Text("Study") }
+                            label = { Text("Study", maxLines = 1, fontSize = 10.sp) }
                         )
                         NavigationBarItem(
                             selected = screen == "all_batches",
                             onClick = { screen = "all_batches" },
                             icon = { Icon(Icons.Default.Search, contentDescription = null) },
-                            label = { Text("Batches") }
+                            label = { Text("All batches", maxLines = 1, fontSize = 10.sp) }
                         )
                         NavigationBarItem(
                             selected = screen == "my_batches",
                             onClick = { screen = "my_batches" },
                             icon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
-                            label = { Text("My batches") }
+                            label = { Text("My batches", maxLines = 1, fontSize = 10.sp) }
                         )
                         NavigationBarItem(
                             selected = screen == "downloads",
                             onClick = { downloadRecords = DownloadRepository.list(context); screen = "downloads" },
-                            icon = { Icon(Icons.Default.Download, contentDescription = null) },
-                            label = { Text("Gallery") }
+                            icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                            label = { Text("Downloads", maxLines = 1, fontSize = 10.sp) }
+                        )
+                        NavigationBarItem(
+                            selected = screen == "settings",
+                            onClick = { screen = "settings" },
+                            icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                            label = { Text("Settings", maxLines = 1, fontSize = 10.sp) }
                         )
                     }
                 }
             },
             containerColor = Color(0xFF0B0D14)
         ) { padding ->
-            Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = if (screen == "player") 0.dp else 18.dp)) {
-                when (screen) {
+            Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = if (screen == "player") 0.dp else 16.dp)) {
+                AnimatedContent(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    targetState = screen,
+                    transitionSpec = {
+                        (fadeIn(tween(170)) + slideInHorizontally(tween(170)) { it / 24 }) togetherWith
+                            (fadeOut(tween(100)) + slideOutHorizontally(tween(100)) { -it / 32 })
+                    },
+                    label = "screen-transition"
+                ) { activeScreen ->
+                    Column(Modifier.fillMaxSize()) {
+                    when (activeScreen) {
                     "home" -> {
                         if (apiKey.isBlank()) {
                             Card(
@@ -1122,6 +1287,32 @@ private fun MineStudyApp() {
                                         Text("Set up access to your batches and lectures", color = Color(0xFF9AA5BA), style = MaterialTheme.typography.bodySmall)
                                     }
                                     Icon(Icons.Default.ArrowForward, null, tint = Color(0xFF9AA5BA))
+                                }
+                            }
+                        } else if (batch.isBlank()) {
+                            Card(
+                                Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)),
+                                shape = RoundedCornerShape(18.dp),
+                                border = BorderStroke(1.dp, Color(0xFF30394B))
+                            ) {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(Icons.Default.MenuBook, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(42.dp))
+                                    Text("No batch added yet", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        "Add a batch to see your subjects, lectures and study material here.",
+                                        color = Color(0xFF9AA5BA),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        "Open All batches to find and add a batch.",
+                                        color = Color(0xFF9AA5BA),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
                                 }
                             }
                         } else {
@@ -1240,6 +1431,11 @@ private fun MineStudyApp() {
                     }
                     "all_batches" -> {
                         Text("All batches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Find a batch and tap Add batch to save it to My batches.",
+                            color = Color(0xFF9AA5BA),
+                            style = MaterialTheme.typography.bodySmall
+                        )
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = batchSearchText,
@@ -1274,7 +1470,6 @@ private fun MineStudyApp() {
                             }
                         )
                         Spacer(Modifier.height(8.dp))
-                        if (batchSearchError.isNotBlank()) Text(batchSearchError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
                         if (batchSearchLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
                         LazyColumn(state = batchListState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
                             items(batchSearchResults, key = { it.id }) { info ->
@@ -1295,7 +1490,11 @@ private fun MineStudyApp() {
                                         }
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                                             OutlinedButton(
-                                                onClick = { saveBatchInfo(info) },
+                                                onClick = {
+                                                    val isFirstBatch = batch.isBlank()
+                                                    saveBatchInfo(info)
+                                                    if (isFirstBatch) openBatch(info)
+                                                },
                                                 enabled = info.id !in savedBatchIds,
                                                 modifier = Modifier.weight(1f).height(46.dp),
                                                 shape = RoundedCornerShape(12.dp),
@@ -1328,8 +1527,7 @@ private fun MineStudyApp() {
                             }
                         }
                     }
-                    "my_batches" -> {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    "my_batches" -> {                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("My batches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                                 Text("${savedBatchIds.size} saved ${if (savedBatchIds.size == 1) "batch" else "batches"}", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
@@ -1352,10 +1550,9 @@ private fun MineStudyApp() {
                             }
                         )
                         Text("Use this if a batch isn't listed in All batches.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                        if (batchSearchError.isNotBlank()) Text(batchSearchError, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.height(10.dp))
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
-                            items(savedBatchIds.sorted(), key = { it }) { id ->
+                            items(savedBatchIds.sortedWith(compareByDescending<String> { it == batch }.thenBy { savedBatchInfo[it]?.name?.lowercase() ?: it }), key = { it }) { id ->
                                 val info = savedBatchInfo[id] ?: BatchInfo(id, "Saved batch")
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF171D2A)), shape = RoundedCornerShape(18.dp)) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1374,8 +1571,16 @@ private fun MineStudyApp() {
                                             }
                                         }
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Button(onClick = { openBatch(info) }, enabled = !busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
-                                                Text(if (batch == id) "Open batch" else "Check & switch")
+                                            if (batch == id) {
+                                                FilledTonalButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                                                    Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(17.dp))
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text("Selected")
+                                                }
+                                            } else {
+                                                OutlinedButton(onClick = { openBatch(info) }, enabled = !busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                                                    Text("Select")
+                                                }
                                             }
                                             OutlinedButton(onClick = { batchPendingRemoval = id }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF8A8A))) {
                                                 Icon(Icons.Default.DeleteOutline, null, modifier = Modifier.size(18.dp))
@@ -1429,6 +1634,10 @@ private fun MineStudyApp() {
                             downloadingKeys = pendingDownloadKeys + downloadState.queueItems.map { it.itemKey }.filter { it.isNotBlank() }.toSet(),
                             downloadQueueItems = downloadState.queueItems,
                             onDownload = { item: StudyItem ->
+                                // Freeze the selected lesson identity before asynchronous URL lookup.
+                                val requestedBatch = api.batchId
+                                val requestedSubject = selectedSubject?.id.orEmpty()
+                                val requestedChapter = selectedChapter?.id.orEmpty()
                                 val video = type == "videos" || type == "DppVideos"
                                 val category = when (type) {
                                     "videos" -> "Lectures"
@@ -1437,13 +1646,17 @@ private fun MineStudyApp() {
                                     "DppVideos" -> "DPP Videos"
                                     else -> type
                                 }
-                                val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${item.id}"
+                                val itemKey = "$requestedBatch:$requestedSubject:$requestedChapter:${item.id}"
+                                val sourceItem = item
                                 startDownload(item.title, category, video, itemKey) {
                                     if (video) {
-                                        val detailPath = "/batch/" + api.batchId + "/subject/" + enc(selectedSubject!!.id) +
-                                            "/chapter/" + enc(selectedChapter!!.id) + "/content/" + enc(item.id)
+                                        if (requestedSubject.isBlank() || requestedChapter.isBlank()) {
+                                            throw IllegalStateException("Lesson selection changed before download started")
+                                        }
+                                        val detailPath = "/batch/" + requestedBatch + "/subject/" + enc(requestedSubject) +
+                                            "/chapter/" + enc(requestedChapter) + "/content/" + enc(sourceItem.id)
                                         findStreamUrl(api.get(detailPath))
-                                    } else item.raw.optString("baseUrl").takeIf { it.startsWith("http", true) }
+                                    } else sourceItem.raw.optString("baseUrl").takeIf { it.startsWith("http", true) }
                                 }
                             },
                             onSelect = { item: StudyItem ->
@@ -1515,9 +1728,16 @@ private fun MineStudyApp() {
                                 it.category == (if (type == "DppVideos") "DPP Videos" else "Lectures")
                         } || (pendingDownloadKey == "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}"),
                         onDownload = {
+                            // Keep the source fixed even if navigation changes the selected video.
+                            val sourceUrl = currentVideo
+                            val title = currentTitle
+                            val requestedBatch = api.batchId
+                            val requestedSubject = selectedSubject?.id.orEmpty()
+                            val requestedChapter = selectedChapter?.id.orEmpty()
+                            val requestedItem = contents.getOrNull(currentItemIndex)?.id.orEmpty()
                             val category = if (type == "DppVideos") "DPP Videos" else "Lectures"
-                            val itemKey = "${api.batchId}:${selectedSubject?.id}:${selectedChapter?.id}:${contents.getOrNull(currentItemIndex)?.id}"
-                            startDownload(currentTitle, category, true, itemKey) { currentVideo }
+                            val itemKey = "$requestedBatch:$requestedSubject:$requestedChapter:$requestedItem"
+                            startDownload(title, category, true, itemKey) { sourceUrl }
                         }
                     )
                     "download_center" -> DownloadCenterScreen(
@@ -1571,11 +1791,50 @@ private fun MineStudyApp() {
                             downloadRecords = DownloadRepository.list(context)
                         }
                     }
+                    "notifications" -> Column(
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("App update", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (latestUpdateVersion > 0L) "Please update Mine Study to the latest version."
+                            else "You're using the latest version.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        if (latestUpdateVersion > 0L) {
+                            Button(onClick = { screen = "settings" }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Update now")
+                            }
+                        }
+                    }
+                    "settings" -> UpdateSettingsScreen(
+                        apiKey = apiKey,
+                        keyStatus = keyStatus,
+                        hasApiKey = api.apiKey.isNotBlank(),
+                        onApiKeyChange = { value ->
+                            apiKey = value
+                            keyStatus = ""
+                            api.batchId = batch
+                        },
+                        onGenerateApiKey = {
+                            scope.launch {
+                                keyStatus = "Generating key link..."
+                                try {
+                                    keyLink = api.generateKeyLink()
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Mine Study key link", keyLink))
+                                    keyStatus = "Link copied. Get your key and paste it above."
+                                    openExternal(context, keyLink)
+                                } catch (e: Exception) {
+                                    keyStatus = "Could not generate key. Check your connection."
+                                }
+                            }
+                        }
+                    )
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                if (error.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(error, color = Color(0xFFFF8A8A), style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }
@@ -1584,12 +1843,19 @@ private fun MineStudyApp() {
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { if (api.apiKey.isNotBlank()) showSettings = false },
-            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.padding(horizontal = 8.dp),
+            shape = RoundedCornerShape(16.dp),
             containerColor = Color(0xFF141A26),
             tonalElevation = 0.dp,
-            title = { Text("Connect API", fontWeight = FontWeight.SemiBold) },
+            title = {
+                Text("Connect API", fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleMedium)
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
                     OutlinedTextField(
                         value = apiKey,
                         onValueChange = { value ->
@@ -1597,9 +1863,10 @@ private fun MineStudyApp() {
                             keyStatus = ""
                             api.batchId = batch
                         },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
                         singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium,
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        shape = RoundedCornerShape(10.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
@@ -1609,7 +1876,7 @@ private fun MineStudyApp() {
                             focusedContainerColor = Color(0xFF101521),
                             unfocusedContainerColor = Color(0xFF101521)
                         ),
-                        placeholder = { Text("Paste API key", style = MaterialTheme.typography.bodySmall) }
+                        placeholder = { Text("Paste API key", style = MaterialTheme.typography.labelSmall) }
                     )
                     OutlinedButton(
                         onClick = {
@@ -1626,12 +1893,12 @@ private fun MineStudyApp() {
                                 }
                             }
                         },
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(vertical = 7.dp)
+                        modifier = Modifier.fillMaxWidth().height(38.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                     ) {
-                        Icon(Icons.Default.Key, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Generate")
+                        Icon(Icons.Default.Key, null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Generate", style = MaterialTheme.typography.labelMedium)
                     }
                     if (keyStatus.isNotBlank()) {
                         Text(
@@ -1643,7 +1910,20 @@ private fun MineStudyApp() {
                 }
             },
             confirmButton = {},
-            dismissButton = {}
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        downloadRecords = DownloadRepository.list(context)
+                        showSettings = false
+                        screen = "downloads"
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Offline? Open Downloads", style = MaterialTheme.typography.labelMedium)
+                }
+            }
         )
     }
 }
@@ -1704,6 +1984,19 @@ private fun ItemList(
         }
         if (showSubjectStars) filtered.sortedByDescending { it.id in starredSubjectIds } else filtered
     }
+    // Index download state once per update instead of scanning the full list per row.
+    val downloadedKeys = remember(downloadRecords, downloadCategory) {
+        downloadRecords.asSequence().filter { it.category == downloadCategory && it.itemKey.isNotBlank() }
+            .map { it.itemKey }.toSet()
+    }
+    val downloadedNames = remember(downloadRecords, downloadCategory) {
+        downloadRecords.asSequence().filter { it.category == downloadCategory && it.itemKey.isBlank() }
+            .map { it.name.substringBeforeLast('.').lowercase() }.toSet()
+    }
+    val queueByKey = remember(downloadQueueItems, downloadCategory) {
+        downloadQueueItems.asSequence().filter { it.category == downloadCategory && it.itemKey.isNotBlank() }
+            .associateBy { it.itemKey }
+    }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(heading, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         if (searchable) {
@@ -1757,19 +2050,26 @@ private fun ItemList(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 20.dp)
             ) {
-                items(visibleItems, key = { it.id }) { item ->
+                items(visibleItems, key = { it.id }, contentType = { if (showThumbnails) "lecture-row" else "study-row" }) { item ->
                     val thumbnail = item.raw.optString("image").takeIf { showThumbnails && it.startsWith("http", true) }
                     val cleanTitle = item.title.replace(Regex("[\\\\/:*?\\\"<>|]"), "_").trim()
                     val itemKey = downloadItemKey(item)
-                    val downloaded = downloadRecords.any { record ->
-                        record.category == downloadCategory && (record.itemKey == itemKey ||
-                            (record.itemKey.isBlank() && record.name.substringBeforeLast('.').equals(cleanTitle, ignoreCase = true)))
-                    }
-                    val queueEntry = downloadQueueItems.firstOrNull { it.itemKey == itemKey && it.category == downloadCategory }
+                    val downloaded = itemKey in downloadedKeys || cleanTitle.lowercase() in downloadedNames
+                    val queueEntry = queueByKey[itemKey]
                     val downloading = itemKey in downloadingKeys || (activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory)
                     val itemPercent = queueEntry?.takeIf { it.total > 0L }?.let {
                         ((it.bytes * 100L) / it.total).toInt().coerceIn(0, 99)
                     } ?: if (activeDownloadKey == itemKey && activeDownloadCategory == downloadCategory) activeDownloadPercent else 0
+                    val pulseTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "download-pulse")
+                    val downloadPulse by pulseTransition.animateFloat(
+                        initialValue = 0.88f,
+                        targetValue = 1.12f,
+                        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                            animation = androidx.compose.animation.core.tween(650),
+                            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+                        ),
+                        label = "download-pulse"
+                    )
 
                     Card(
                         modifier = Modifier.fillMaxWidth().animateContentSize().clickable { onSelect(item) },
@@ -1790,12 +2090,11 @@ private fun ItemList(
                                     if (thumbnail != null) {
                                         AsyncImage(
                                             model = thumbnail,
-                                            contentDescription = item.title,
-                                            contentScale = ContentScale.Crop,
+                                            contentDescription = item.title,                                            contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
                                         )
                                     } else {
-                                        Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(27.dp))
+                                        Icon(if (actionLabel == "Open PDF") Icons.Default.MenuBook else Icons.Default.PlayArrow, null, tint = Color(0xFFB5A9FF), modifier = Modifier.size(27.dp))
                                     }
                                 }
                             } else {
@@ -1857,7 +2156,7 @@ private fun ItemList(
                                 ) {
                                     when {
                                         downloading -> Box(contentAlignment = Alignment.Center, modifier = Modifier.size(29.dp)) {
-                                            CircularProgressIndicator(Modifier.size(25.dp), strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
+                                            CircularProgressIndicator(Modifier.size(25.dp).graphicsLayer { scaleX = if (downloading) downloadPulse else 1f; scaleY = if (downloading) downloadPulse else 1f }, strokeWidth = 2.dp, color = Color(0xFFB5A9FF))
                                             Text(if (queueEntry?.active == false) "Q" else "$itemPercent%", fontSize = 7.sp, color = Color.White)
                                         }
                                         downloaded -> Icon(Icons.Default.CheckCircle, "Downloaded", tint = Color(0xFF38C879), modifier = Modifier.size(22.dp))
@@ -1947,6 +2246,7 @@ private fun VideoScreen(
     var showResources by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
     var controlsLocked by remember { mutableStateOf(false) }
+    var showUnlockButton by remember { mutableStateOf(false) }
     var speedMenu by remember { mutableStateOf(false) }
     var speedDialog by remember { mutableStateOf(false) }
     var speedText by remember { mutableStateOf("1.25") }
@@ -2056,7 +2356,7 @@ private fun VideoScreen(
     DisposableEffect(fullScreen) {
         val window = activity?.window
         if (fullScreen) {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             if (window != null) WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
         } else {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -2065,6 +2365,13 @@ private fun VideoScreen(
         onDispose {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             if (window != null) WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    LaunchedEffect(controlsLocked, showUnlockButton) {
+        if (controlsLocked && showUnlockButton) {
+            delay(2500)
+            showUnlockButton = false
         }
     }
 
@@ -2149,7 +2456,7 @@ private fun VideoScreen(
     }
 
     @Composable
-    fun PlayerOverlay(landscape: Boolean) {
+    fun PlayerOverlay(landscape: Boolean, fullScreenMode: Boolean = landscape) {
         val iconSize = if (landscape) 28.dp else 23.dp
         Column(
             Modifier.fillMaxSize()
@@ -2158,11 +2465,11 @@ private fun VideoScreen(
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { if (landscape) fullScreen = false else onBack() }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { if (fullScreenMode) fullScreen = false else onBack() }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
                 }
                 Text(title, color = Color.White, maxLines = 1, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                if (landscape) {
+                if (fullScreenMode) {
                     TextButton(onClick = { showResources = true }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
                         Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(17.dp), tint = Color.White)
                         Spacer(Modifier.width(4.dp))
@@ -2180,7 +2487,9 @@ private fun VideoScreen(
                     }
                 }
                 SpeedPicker()
-                IconButton(onClick = {                    controlsLocked = true
+                IconButton(onClick = {
+                    controlsLocked = true
+                    showUnlockButton = false
                     showControls = false
                 }, modifier = Modifier.size(38.dp)) {
                     Icon(Icons.Default.Lock, "Lock controls", tint = Color.White)
@@ -2258,11 +2567,30 @@ private fun VideoScreen(
                         modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { showRemainingTime = !showRemainingTime }.padding(horizontal = 3.dp, vertical = 2.dp)
                     )
                     Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { volumePanel = !volumePanel }, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            when { volume == 0 -> Icons.Default.VolumeMute; volume < maxVolume / 2 -> Icons.Default.VolumeDown; else -> Icons.Default.VolumeUp },
-                            "Mute or restore volume", tint = Color.White, modifier = Modifier.size(19.dp)
-                        )
+                    IconButton(
+                        onClick = {
+                            if (volume > 0) {
+                                previousVolume = volume
+                                volume = 0
+                            } else {
+                                volume = previousVolume.coerceIn(1, maxVolume)
+                            }
+                            audio.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                            volumePanel = true
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Box(Modifier.size(19.dp), contentAlignment = Alignment.Center) {
+                            Icon(
+                                when { volume == 0 -> Icons.Default.VolumeMute; volume < maxVolume / 2 -> Icons.Default.VolumeDown; else -> Icons.Default.VolumeUp },
+                                if (volume == 0) "Unmute" else "Mute", tint = Color.White, modifier = Modifier.fillMaxSize()
+                            )
+                            if (volume == 0) {
+                                Canvas(Modifier.fillMaxSize()) {
+                                    drawLine(Color.White, Offset(size.width * 0.12f, size.height * 0.12f), Offset(size.width * 0.88f, size.height * 0.88f), 2.2.dp.toPx(), cap = StrokeCap.Round)
+                                }
+                            }
+                        }
                     }
                     if (volumePanel) {
                         Canvas(
@@ -2412,7 +2740,10 @@ private fun VideoScreen(
                             )
                         }.pointerInput(player, controlsLocked) {
             detectTapGestures(
-                onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
+                onTap = {
+                    if (controlsLocked) showUnlockButton = true
+                    else showControls = !showControls
+                },
                 onDoubleTap = { offset ->
                     if (!controlsLocked) {
                         val delta = if (offset.x < size.width / 2f) -10_000L else 10_000L
@@ -2448,10 +2779,11 @@ private fun VideoScreen(
                     Text(gestureValue, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 }
             }
-            if (controlsLocked) {
-                Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
-                    .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 9.dp))
-            } else if (showControls) PlayerOverlay(landscape = true)
+            if (controlsLocked && showUnlockButton) {
+                IconButton(onClick = { controlsLocked = false; showUnlockButton = false; showControls = true }, modifier = Modifier.align(Alignment.Center).size(52.dp).background(Color(0xAA000000), RoundedCornerShape(50))) {
+                    Icon(Icons.Default.LockOpen, contentDescription = "Unlock controls", tint = Color.White)
+                }
+            } else if (!controlsLocked && showControls) PlayerOverlay(landscape = true, fullScreenMode = true)
             if (showResources) {
                 Box(Modifier.fillMaxSize().background(Color(0x99000000)).clickable { showResources = false }) {
                     Card(
@@ -2546,7 +2878,10 @@ private fun VideoScreen(
                                     )
                                 }.pointerInput(player, controlsLocked) {
                         detectTapGestures(
-                            onTap = { if (controlsLocked) { controlsLocked = false; showControls = true } else showControls = !showControls },
+                            onTap = {
+                    if (controlsLocked) showUnlockButton = true
+                    else showControls = !showControls
+                },
                             onDoubleTap = { offset ->
                                 if (!controlsLocked) {
                                     val delta = if (offset.x < size.width / 2f) -10_000L else 10_000L
@@ -2583,10 +2918,11 @@ private fun VideoScreen(
                     Text(gestureValue, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 }
             }
-            if (controlsLocked) {
-                    Text("Tap to unlock", color = Color.White, modifier = Modifier.align(Alignment.Center)
-                        .background(Color(0xAA000000), RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 8.dp))
-                } else if (showControls) PlayerOverlay(landscape = false)
+            if (controlsLocked && showUnlockButton) {
+                IconButton(onClick = { controlsLocked = false; showUnlockButton = false; showControls = true }, modifier = Modifier.align(Alignment.Center).size(48.dp).background(Color(0xAA000000), RoundedCornerShape(50))) {
+                    Icon(Icons.Default.LockOpen, contentDescription = "Unlock controls", tint = Color.White)
+                }
+            } else if (!controlsLocked && showControls) PlayerOverlay(landscape = false)
                 if (playerError.isNotBlank()) {
                     TextButton(onClick = { playerError = ""; player.prepare(); player.play() }, modifier = Modifier.align(Alignment.TopEnd)) {
                         Text("Retry", color = Color.White)
@@ -2790,8 +3126,7 @@ private fun openLocalDocument(context: Context, uri: Uri) {
 private fun openExternal(context: Context, value: String) {
     try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(value)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) { }
 }
-private fun downloadVideo(context: Context, url: String, key: String, title: String) {
-    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+private fun downloadVideo(context: Context, url: String, key: String, title: String) {    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
         var mediaUri: Uri? = null
         try {
             val safeName = title.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "MineStudy_Lecture" } + ".mp4"

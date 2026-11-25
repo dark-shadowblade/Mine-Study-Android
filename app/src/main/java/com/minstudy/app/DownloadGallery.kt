@@ -233,7 +233,7 @@ fun DownloadGallery(
     var selectedUris by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(setOf<String>()) }
     var selectionMode by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var confirmDelete by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
-    val categories = listOf("Lectures", "Notes", "DPP", "DPP Videos", "All")
+    val categories = listOf("All", "Lectures", "Notes", "DPP", "DPP Videos")
     val visible = if (selected == "All") records else records.filter { it.category == selected }
     val selectedRecords = visible.filter { it.uri in selectedUris }
     val totalStored = records.sumOf { it.bytes }
@@ -244,7 +244,7 @@ fun DownloadGallery(
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
         ) {
             androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
-                androidx.compose.material3.Text("Download Manager", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                androidx.compose.material3.Text("Downloader", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                 androidx.compose.material3.Text(
                     "${records.size} files  •  ${formatDownloadBytes(totalStored)} used",
                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
@@ -488,6 +488,12 @@ fun PdfViewerScreen(uri: Uri, title: String, onBack: () -> Unit) {
     }
 }
 
+private fun formatDownloadSpeed(bytesPerSecond: Long): String {
+    if (bytesPerSecond <= 0L) return "— MB/s"
+    val mb = bytesPerSecond / (1024.0 * 1024.0)
+    return if (mb >= 1.0) String.format(java.util.Locale.US, "%.2f MB/s", mb)
+    else String.format(java.util.Locale.US, "%.0f KB/s", bytesPerSecond / 1024.0)
+}
 
 private fun formatDownloadBytes(bytes: Long): String {
     if (bytes < 1024L) return "$bytes B"
@@ -526,7 +532,7 @@ fun DownloadCenterScreen(
         item {
             androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
-                    androidx.compose.material3.Text("Download Center", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    androidx.compose.material3.Text("Downloader", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                     androidx.compose.material3.Text("$runningCount active  ·  $queuedCount queued", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
@@ -593,12 +599,24 @@ fun DownloadCenterScreen(
                     androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(5.dp)) {
                         androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
-                                androidx.compose.material3.Text(item.title, maxLines = 2, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
+                                androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                                    if (item.active && !item.paused) {
+                                        androidx.compose.material3.CircularProgressIndicator(
+                                            modifier = Modifier.size(17.dp),
+                                            strokeWidth = 2.dp,
+                                            color = androidx.compose.material3.MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    androidx.compose.material3.Text(item.title, maxLines = 2, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                }
                                 androidx.compose.material3.Text(if (item.paused) "Paused · slot released" else if (item.active) "Downloading · ${item.category}" else "Queued · ${item.category}", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
                                 if (item.active && item.total > 0L) {
                                     androidx.compose.material3.LinearProgressIndicator(progress = (item.bytes.toFloat() / item.total.toFloat()).coerceIn(0f, 1f), modifier = Modifier.fillMaxWidth())
-                                    androidx.compose.material3.Text("${(item.bytes * 100L / item.total).toInt()}% · ${formatDownloadBytes(item.bytes)} / ${formatDownloadBytes(item.total)}", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-                                } else if (item.active) androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                    androidx.compose.material3.Text("${(item.bytes * 100L / item.total).toInt()}% · ${formatDownloadBytes(item.bytes)} / ${formatDownloadBytes(item.total)} · ${formatDownloadSpeed(item.speed)}", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                                } else if (item.active) {
+                                    androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                    androidx.compose.material3.Text("${formatDownloadBytes(item.bytes)} · ${formatDownloadSpeed(item.speed)}", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                             if (item.active) {
                                 androidx.compose.material3.IconButton(onClick = { if (item.paused) onResume(item.id) else onPause(item.id) }, modifier = Modifier.size(34.dp)) {

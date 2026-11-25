@@ -5,9 +5,18 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: write
+
+concurrency:
+  group: mine-study-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,10 +29,41 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Verify permanent signing key
+        run: |
+          set -euo pipefail
+          test -s app/debug.keystore
+          keytool -list -v -keystore app/debug.keystore -storepass android -alias androiddebugkey
       - name: Build debug APK
-        run: gradle assembleDebug
-      - name: Upload APK
+        run: gradle --no-build-cache assembleDebug -PversionCode=${{ github.run_number }}
+      - name: Enforce permanent APK signing certificate
+        run: |
+          set -euo pipefail
+          SDK_DIR="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          APKSIGNER="$(find "$SDK_DIR/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          EXPECTED_CERT="0d927c1457f4f691cbc0ce35aa5882fca1fee1e06534c1a5b3f41f85021c2d81"
+          ACTUAL_CERT="$("$APKSIGNER" verify --print-certs "$APK" 2>&1 | grep -Eio '[0-9a-f]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
+          if [ -z "$ACTUAL_CERT" ]; then
+            echo "::error::Could not read the APK signing certificate."
+            exit 1
+          fi
+          echo "Expected signing certificate: $EXPECTED_CERT"
+          echo "Built APK certificate:       $ACTUAL_CERT"
+          if [ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]; then
+            echo "::error::Signing certificate changed. Release blocked to prevent breaking app updates."
+            exit 1
+          fi
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: mine-study-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Mine Study v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: app/build/outputs/apk/debug/app-debug.apk
